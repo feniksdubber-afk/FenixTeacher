@@ -2,12 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getCourse, presignUpload, registerBook, uploadFileToR2, CourseDetail } from "../api/fenix";
 
+function kitobBelgisi(holat: string) {
+  if (holat === "tayyor") return { cls: "is-active", label: "tayyor" };
+  if (holat === "jarayonda") return { cls: "is-processing", label: "ishlanmoqda" };
+  if (holat === "xato") return { cls: "is-error", label: "xato" };
+  return { cls: "", label: holat };
+}
+
 export function CoursePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [course, setCourse] = useState<CourseDetail | null>(null);
   const [holat, setHolat] = useState<string | null>(null);
   const [xato, setXato] = useState<string | null>(null);
+  const [draging, setDraging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function yuklash() {
@@ -27,7 +35,7 @@ export function CoursePage() {
       const { file_key, upload_url } = await presignUpload(file.type);
       await uploadFileToR2(file, upload_url, (foiz) => setHolat(`Yuklanmoqda... ${foiz}%`));
 
-      setHolat("Kitob qayta ishlanmoqda — bu bir necha daqiqa cho'zilishi mumkin...");
+      setHolat("Kitob qayta ishlanmoqda — bir necha daqiqa cho'zilishi mumkin...");
       const natija = await registerBook({
         course_id: id,
         nomi: file.name,
@@ -44,63 +52,71 @@ export function CoursePage() {
     }
   }
 
-  if (!course) return <div style={{ padding: 16 }}>{xato ?? "Yuklanmoqda..."}</div>;
+  if (!course) {
+    return (
+      <div className="page">
+        <p className="empty">{xato ?? "Yuklanmoqda..."}</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1 style={{ fontSize: 22 }}>{course.til_nomi}</h1>
-      <p style={{ opacity: 0.6, fontSize: 13 }}>{course.holati}</p>
+    <div className="page">
+      <div className="hero">
+        <h1 className="h1">{course.til_nomi}</h1>
+        <p className="sub">{course.holati}</p>
+      </div>
 
-      <button
-        onClick={() => navigate(`/courses/${id}/vocab`)}
-        style={{
-          marginTop: 16,
-          width: "100%",
-          padding: "12px",
-          borderRadius: 12,
-          border: "1px solid var(--tg-theme-button-color, #3390ec)",
-          background: "transparent",
-          color: "var(--tg-theme-button-color, #3390ec)",
+      <div className="link-row">
+        <button onClick={() => navigate(`/courses/${id}/vocab`)} className="text-link is-primary">
+          so'z boyligi
+        </button>
+        <button onClick={() => navigate(`/courses/${id}/weekly-report`)} className="text-link">
+          haftalik hisobot
+        </button>
+      </div>
+
+      <h2 className="h2">Kitoblar</h2>
+
+      {course.books.length === 0 && <p className="empty">Hali kitob yuklanmagan.</p>}
+
+      {!!course.books.length && (
+        <div className="toc">
+          {course.books.map((b) => {
+            const s = kitobBelgisi(b.qayta_ishlash_holati);
+            const bosiladi = b.qayta_ishlash_holati === "tayyor";
+            return (
+              <button
+                key={b.id}
+                onClick={() => bosiladi && navigate(`/books/${b.id}/chapters`)}
+                className={`toc-row ${!bosiladi ? "is-disabled" : ""}`}
+              >
+                <span className="toc-name">{b.nomi}</span>
+                <span className="toc-leader" />
+                <span className={`toc-status ${s.cls}`}>{s.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div
+        className={`dropzone ${draging ? "is-active" : ""}`}
+        onClick={() => fileInputRef.current?.click()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDraging(true);
+        }}
+        onDragLeave={() => setDraging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDraging(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) handleFileChosen(file);
         }}
       >
-        So'z boyligini ko'rib chiqish
-      </button>
-
-      <button
-        onClick={() => navigate(`/courses/${id}/weekly-report`)}
-        style={{
-          marginTop: 8,
-          width: "100%",
-          padding: "12px",
-          borderRadius: 12,
-          border: "1px solid rgba(255,255,255,0.2)",
-          background: "transparent",
-          color: "inherit",
-        }}
-      >
-        Haftalik hisobot
-      </button>
-
-      <h2 style={{ fontSize: 16, marginTop: 24 }}>Kitoblar</h2>
-      {course.books.length === 0 && <p style={{ opacity: 0.7 }}>Hali kitob yuklanmagan.</p>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {course.books.map((b) => (
-          <div
-            key={b.id}
-            onClick={() => b.qayta_ishlash_holati === "tayyor" && navigate(`/books/${b.id}/chapters`)}
-            style={{
-              padding: 12,
-              borderRadius: 10,
-              background: "var(--tg-theme-secondary-bg-color, #1c1c1f)",
-              display: "flex",
-              justifyContent: "space-between",
-              cursor: b.qayta_ishlash_holati === "tayyor" ? "pointer" : "default",
-            }}
-          >
-            <span>{b.nomi}</span>
-            <span style={{ opacity: 0.6, fontSize: 13 }}>{b.qayta_ishlash_holati}</span>
-          </div>
-        ))}
+        <span>Yangi PDF kitob yuklash</span>
+        <span className="dropzone-plus">+</span>
       </div>
 
       <input
@@ -113,23 +129,9 @@ export function CoursePage() {
           if (file) handleFileChosen(file);
         }}
       />
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        style={{
-          marginTop: 16,
-          width: "100%",
-          padding: "12px",
-          borderRadius: 12,
-          border: "none",
-          background: "var(--tg-theme-button-color, #3390ec)",
-          color: "var(--tg-theme-button-text-color, #fff)",
-        }}
-      >
-        + PDF kitob yuklash
-      </button>
 
-      {holat && <p style={{ marginTop: 12, opacity: 0.8 }}>{holat}</p>}
-      {xato && <p style={{ marginTop: 12, color: "#ff6b6b" }}>{xato}</p>}
+      {holat && <p className="sub" style={{ marginTop: 14 }}>{holat}</p>}
+      {xato && <p className="error-text" style={{ marginTop: 14 }}>{xato}</p>}
     </div>
   );
 }

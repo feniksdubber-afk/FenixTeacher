@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
-import type { CSSProperties } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { listCourses, createCourse, Course } from "../api/fenix";
 
+function holatBelgisi(holati: string) {
+  if (holati === "faol" || holati === "active") return "is-active";
+  return "";
+}
+
 export function CoursesPage() {
+  const navigate = useNavigate();
   const [courses, setCourses] = useState<Course[] | null>(null);
   const [yaratilmoqda, setYaratilmoqda] = useState(false);
   const [tilNomi, setTilNomi] = useState("");
@@ -29,80 +34,63 @@ export function CoursesPage() {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 12 }}>Bo'limlar</h1>
-
-      {xato && <p style={{ color: "#ff6b6b" }}>{xato}</p>}
-
-      {courses === null && <p>Yuklanmoqda...</p>}
-
-      {courses?.length === 0 && !yaratilmoqda && (
-        <p style={{ opacity: 0.7 }}>Hali bo'lim yo'q. Birinchisini boshlaymizmi?</p>
-      )}
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {courses?.map((c) => (
-          <Link
-            key={c.id}
-            to={`/courses/${c.id}`}
-            style={{
-              padding: "14px 16px",
-              borderRadius: 12,
-              background: "var(--tg-theme-secondary-bg-color, #1c1c1f)",
-              color: "inherit",
-              textDecoration: "none",
-              display: "flex",
-              justifyContent: "space-between",
-            }}
-          >
-            <span>{c.til_nomi}</span>
-            <span style={{ opacity: 0.6, fontSize: 13 }}>{c.holati}</span>
-          </Link>
-        ))}
+    <div className="page">
+      <div className="hero">
+        <h1 className="h1">O'qiyotgan tillaringiz</h1>
       </div>
 
+      {xato && <p className="error-text">{xato}</p>}
+      {courses === null && <p className="empty">Yuklanmoqda...</p>}
+
+      {courses?.length === 0 && !yaratilmoqda && (
+        <p className="empty">Hali bo'lim ochilmagan. Birinchi tilni shu yerdan boshlaysiz.</p>
+      )}
+
+      {!!courses?.length && (
+        <div className="toc">
+          {courses.map((c) => (
+            <button key={c.id} onClick={() => navigate(`/courses/${c.id}`)} className="toc-row">
+              <span className="toc-name">{c.til_nomi}</span>
+              <span className="toc-leader" />
+              <span className={`toc-status ${holatBelgisi(c.holati)}`}>{c.holati}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {!yaratilmoqda ? (
-        <button onClick={() => setYaratilmoqda(true)} style={btnStyle}>
-          + Yangi bo'lim
-        </button>
+        <div className="link-row" style={{ marginTop: 22 }}>
+          <button onClick={() => setYaratilmoqda(true)} className="text-link is-primary">
+            + yangi til qo'shish
+          </button>
+        </div>
       ) : (
-        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ marginTop: 24 }}>
           <input
-            placeholder="Til nomi (masalan: Nemis tili)"
+            className="input"
+            placeholder="Til nomi, masalan: Nemis tili"
             value={tilNomi}
             onChange={(e) => setTilNomi(e.target.value)}
-            style={inputStyle}
+            autoFocus
+            style={{ marginBottom: 14 }}
           />
           <input
-            placeholder="Til kodi (masalan: de)"
+            className="input"
+            placeholder="Til kodi, masalan: de"
             value={tilKodi}
             onChange={(e) => setTilKodi(e.target.value)}
-            style={inputStyle}
+            style={{ marginBottom: 18 }}
           />
-          <button onClick={handleCreate} style={btnStyle}>
-            Yaratish
-          </button>
+          <div className="link-row">
+            <button onClick={handleCreate} className="text-link is-primary">
+              qo'shish
+            </button>
+            <button onClick={() => setYaratilmoqda(false)} className="text-link">
+              bekor qilish
+            </button>
+          </div>
         </div>
       )}
     </div>
   );
 }
-
-const btnStyle: CSSProperties = {
-  marginTop: 16,
-  width: "100%",
-  padding: "12px",
-  borderRadius: 12,
-  border: "none",
-  background: "var(--tg-theme-button-color, #3390ec)",
-  color: "var(--tg-theme-button-text-color, #fff)",
-  fontSize: 15,
-};
-
-const inputStyle: CSSProperties = {
-  padding: "12px",
-  borderRadius: 10,
-  border: "1px solid #333",
-  background: "transparent",
-  color: "inherit",
-};

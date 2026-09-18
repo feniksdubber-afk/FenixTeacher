@@ -4,10 +4,10 @@ import { useParams } from "react-router-dom";
 import { listDueWords, reviewWord, playTts, DueWord } from "../api/fenix";
 
 /** Foydalanuvchi bosgan tugmani SM-2 "sifat" (0-5) qiymatiga o'giradi. */
-const SIFAT_TUGMALARI: { label: string; sifat: number; bg: string }[] = [
-  { label: "Unutdim", sifat: 1, bg: "#3a1d1d" },
-  { label: "Qiyin edi", sifat: 3, bg: "#3a331d" },
-  { label: "Oson", sifat: 5, bg: "#1d3a24" },
+const SIFAT_TUGMALARI: { label: string; sifat: number; cls: string }[] = [
+  { label: "unutdim", sifat: 1, cls: "q-hard" },
+  { label: "qiyin edi", sifat: 3, cls: "q-mid" },
+  { label: "oson", sifat: 5, cls: "q-easy" },
 ];
 
 export function VocabPage() {
@@ -60,106 +60,97 @@ export function VocabPage() {
 
   if (xato) {
     return (
-      <div style={{ padding: 16 }}>
-        <p style={{ color: "#ff6b6b" }}>{xato}</p>
+      <div className="page">
+        <p className="error-text">{xato}</p>
       </div>
     );
   }
 
   if (sozlar === null) {
-    return <div style={{ padding: 16 }}>Yuklanmoqda...</div>;
+    return (
+      <div className="page">
+        <p className="empty">Yuklanmoqda...</p>
+      </div>
+    );
   }
 
   if (sozlar.length === 0) {
     return (
-      <div style={{ padding: 16 }}>
-        <h1 style={{ fontSize: 22, marginBottom: 8 }}>So'z boyligi</h1>
-        <p style={{ opacity: 0.7 }}>Hozircha takrorlash uchun so'z yo'q. Mashqlarni davom ettiring — Fenix bob matnidan yangi so'zlarni o'zi taklif qiladi.</p>
+      <div className="page">
+        <div className="hero">
+          <h1 className="h1">So'z boyligi</h1>
+        </div>
+        <div className="ash-note">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3v3M12 3c-3 2-5 4-5 8a5 5 0 0010 0c0-4-2-6-5-8z" stroke="#5a4d3d" strokeWidth="1.2" />
+            <circle cx="6" cy="18" r="0.6" fill="#5a4d3d" />
+            <circle cx="17" cy="19" r="0.8" fill="#5a4d3d" />
+            <circle cx="10" cy="20" r="0.5" fill="#5a4d3d" />
+          </svg>
+          <p className="empty">
+            Hozircha takrorlash uchun so'z yo'q. Mashqlarni davom ettiring — Fenix bob matnidan yangi
+            so'zlarni o'zi taklif qiladi.
+          </p>
+        </div>
       </div>
     );
   }
 
   if (indeks >= sozlar.length) {
+    const foiz = sozlar.length ? Math.round((song.togri / sozlar.length) * 100) : 0;
     return (
-      <div style={{ padding: 16, textAlign: "center" }}>
-        <h1 style={{ fontSize: 22, marginBottom: 8 }}>Tayyor!</h1>
-        <p style={{ opacity: 0.7 }}>
-          {sozlar.length} ta so'zdan {song.togri} tasini eslading.
+      <div className="page center-note">
+        <h1 className="h1">Tayyor.</h1>
+        <p className="empty" style={{ margin: "0 auto" }}>
+          {sozlar.length} ta so'zdan {song.togri} tasini eslading — {foiz}%.
         </p>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22 }}>So'z boyligi</h1>
-        <span style={{ opacity: 0.6, fontSize: 13 }}>
+    <div className="page">
+      <div className="hero" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <h1 className="h1" style={{ marginBottom: 0 }}>
+          So'z boyligi
+        </h1>
+        <span className="sub">
           {indeks + 1} / {sozlar.length}
         </span>
       </div>
 
-      <div
-        onClick={() => setOchiq((o) => !o)}
-        style={{
-          padding: "40px 16px",
-          borderRadius: 16,
-          background: "var(--tg-theme-secondary-bg-color, #1c1c1f)",
-          textAlign: "center",
-          cursor: "pointer",
-          minHeight: 140,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          gap: 8,
-        }}
-      >
-        <span style={{ fontSize: 24, fontWeight: 600 }}>{joriySoz?.soz}</span>
-        {joriySoz?.soz_turi && <span style={{ opacity: 0.5, fontSize: 13 }}>{joriySoz.soz_turi}</span>}
-        <button
-          onClick={tinglash}
-          style={{
-            alignSelf: "center",
-            marginTop: 4,
-            width: 36,
-            height: 36,
-            borderRadius: "50%",
-            border: "1px solid rgba(255,255,255,0.2)",
-            background: "transparent",
-            color: "inherit",
-            fontSize: 16,
-            cursor: "pointer",
-          }}
-          title="Tinglash"
-        >
-          🔊
-        </button>
-        {ovozXato && <span style={{ fontSize: 11, opacity: 0.5 }}>Ovoz hozircha sozlanmagan</span>}
-        {ochiq ? (
-          <span style={{ fontSize: 18, marginTop: 12, color: "var(--tg-theme-link-color, #62bcf9)" }}>
-            {joriySoz?.tarjima}
-          </span>
-        ) : (
-          <span style={{ opacity: 0.5, fontSize: 14, marginTop: 12 }}>Tarjimani ko'rish uchun bosing</span>
-        )}
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${(indeks / sozlar.length) * 100}%` }} />
       </div>
 
+      <div className="card-stage">
+        <div className="flip-scene" onClick={() => setOchiq((o) => !o)}>
+          <div className={`flip-card ${ochiq ? "is-flipped" : ""}`}>
+            <div className="index-card flip-front">
+              <span className="index-card-term">{joriySoz?.soz}</span>
+              {joriySoz?.soz_turi && <span className="index-card-type">{joriySoz.soz_turi}</span>}
+              <span className="index-card-hint">bosing — tarjima ko'rinadi</span>
+              <button onClick={tinglash} className="sound-btn" title="Tinglash">
+                🔊
+              </button>
+            </div>
+            <div className="index-card flip-back">
+              <span className="index-card-translation index-card-translation-big">{joriySoz?.tarjima}</span>
+              <span className="index-card-hint">yana bosing — orqaga</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {ovozXato && <span className="sound-warn">Ovoz hozircha sozlanmagan</span>}
+
       {ochiq && (
-        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <div className="quality-row">
           {SIFAT_TUGMALARI.map((t) => (
             <button
               key={t.sifat}
               disabled={yuborilmoqda}
               onClick={() => baholash(t.sifat)}
-              style={{
-                flex: 1,
-                padding: "12px 8px",
-                borderRadius: 12,
-                border: "none",
-                background: t.bg,
-                color: "#fff",
-                opacity: yuborilmoqda ? 0.6 : 1,
-              }}
+              className={`quality-btn ${t.cls}`}
             >
               {t.label}
             </button>

@@ -1,10 +1,10 @@
 import { useState } from "react";
-import type { CSSProperties } from "react";
 import { useParams } from "react-router-dom";
 import {
   generateExercise,
   submitAnswer,
   discussExercise,
+  playTts,
   NewExercise,
   AnswerResult,
   DiscussionMessage,
@@ -68,109 +68,104 @@ export function ExercisePage() {
     }
   }
 
-  const natijaRangi =
-    natija?.natija === "togri" ? "#4caf50" : natija?.natija === "qisman" ? "#e0a800" : "#ff6b6b";
+  const natijaSinfi =
+    natija?.natija === "togri"
+      ? "result-togri"
+      : natija?.natija === "qisman"
+      ? "result-qisman"
+      : "result-notogri";
+
+  const natijaSozi =
+    natija?.natija === "togri" ? "To'g'ri." : natija?.natija === "qisman" ? "Qisman to'g'ri." : "Noto'g'ri.";
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1 style={{ fontSize: 20, marginBottom: 12 }}>Fenix bilan mashq</h1>
+    <div className="page">
+      <div className="hero">
+        <h1 className="h1">Mashq</h1>
+      </div>
 
-      {xato && <p style={{ color: "#ff6b6b" }}>{xato}</p>}
+      {xato && <p className="error-text">{xato}</p>}
 
       {holat === "boshlanmagan" && (
-        <button onClick={yangiMashq} style={btnStyle}>
-          Mashqni boshlash
-        </button>
+        <div className="center-note">
+          <p className="empty" style={{ margin: "0 auto 20px" }}>
+            Fenix bob matnidan savol tayyorlaydi. Boshlashga tayyor bo'lganingizda bosing.
+          </p>
+          <button onClick={yangiMashq} className="btn" style={{ maxWidth: 220, margin: "0 auto" }}>
+            Mashqni boshlash
+          </button>
+        </div>
       )}
 
-      {holat === "yuklanmoqda" && <p>Fenix mashq tayyorlamoqda...</p>}
+      {holat === "yuklanmoqda" && (
+        <div className="center-note">
+          <div className="spinner" style={{ margin: "0 auto 14px" }} />
+          <p className="sub">Fenix savol tayyorlamoqda...</p>
+        </div>
+      )}
 
       {exercise && (holat === "javob_kutilmoqda" || holat === "baholandi") && (
-        <div style={{ marginTop: 8 }}>
-          <p style={{ opacity: 0.6, fontSize: 13, marginBottom: 4 }}>
-            Mavzu: {exercise.mavzu}
-            {exercise.interleaved && (
-              <span
-                style={{
-                  marginLeft: 8,
-                  padding: "2px 8px",
-                  borderRadius: 999,
-                  background: "#2a2a1c",
-                  color: "#e0c040",
-                  fontSize: 11,
-                }}
-              >
-                🔁 Takrorlash
-              </span>
-            )}
+        <div>
+          <p className="topic-line">
+            {exercise.mavzu}
+            {exercise.interleaved && <span className="tag-repeat"> · takrorlash</span>}
           </p>
-          <p style={{ fontSize: 16, lineHeight: 1.5 }}>{exercise.savol}</p>
+          <p className="question-text">
+            <span className="question-mark">&ldquo;</span>
+            {exercise.savol}
+            <button onClick={() => playTts(exercise.savol).catch(() => {})} className="inline-sound" title="Tinglash">
+              🔊
+            </button>
+          </p>
 
           {holat === "javob_kutilmoqda" && (
             <>
               <textarea
+                className="ruled"
                 value={javob}
                 onChange={(e) => setJavob(e.target.value)}
-                placeholder="Javobingizni shu yerga yozing..."
-                style={{ ...inputStyle, width: "100%", minHeight: 80, marginTop: 12, resize: "vertical" }}
+                placeholder="javobingiz shu yerga..."
+                style={{ marginTop: 22 }}
               />
-              <button onClick={javobniYubor} style={btnStyle}>
+              <button onClick={javobniYubor} className="btn" style={{ marginTop: 18, maxWidth: 220 }}>
                 Javobni yuborish
               </button>
             </>
           )}
 
           {holat === "baholandi" && natija && (
-            <div style={{ marginTop: 16 }}>
-              <p style={{ color: natijaRangi, fontWeight: 600 }}>
-                {natija.natija === "togri" ? "To'g'ri!" : natija.natija === "qisman" ? "Qisman to'g'ri" : "Noto'g'ri"}
-              </p>
-              <p style={{ marginTop: 6 }}>{natija.fenix_fikri}</p>
-              {natija.togri_javob && (
-                <p style={{ opacity: 0.7, fontSize: 14, marginTop: 6 }}>
-                  To'g'ri javob: {natija.togri_javob}
-                </p>
-              )}
+            <div style={{ marginTop: 22 }}>
+              <p className={`result-line ${natijaSinfi}`}>{natijaSozi}</p>
+              <p style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink)" }}>{natija.fenix_fikri}</p>
+              {natija.togri_javob && <p className="sub" style={{ marginTop: 8 }}>To'g'ri javob: {natija.togri_javob}</p>}
 
-              <div style={{ marginTop: 20 }}>
-                <p style={{ fontSize: 14, opacity: 0.7, marginBottom: 8 }}>
-                  Tushunmagan joyi bo'lsa Fenixdan so'rang ("Nega?"):
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
+              <div className="divider" />
+
+              <p className="sub" style={{ marginBottom: 10 }}>
+                Tushunmagan joyi bo'lsa so'rang — &ldquo;Nega?&rdquo;
+              </p>
+
+              {suhbat.length > 0 && (
+                <div className="chat-list">
                   {suhbat.map((m, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        alignSelf: m.kim_yozgan === "user" ? "flex-end" : "flex-start",
-                        background:
-                          m.kim_yozgan === "user"
-                            ? "var(--tg-theme-button-color, #3390ec)"
-                            : "var(--tg-theme-secondary-bg-color, #1c1c1f)",
-                        color: m.kim_yozgan === "user" ? "var(--tg-theme-button-text-color, #fff)" : "inherit",
-                        padding: "8px 12px",
-                        borderRadius: 10,
-                        maxWidth: "85%",
-                      }}
-                    >
-                      {m.xabar}
+                    <div key={i} className={`chat-line ${m.kim_yozgan === "user" ? "is-user" : ""}`}>
+                      <div className={`chat-bubble ${m.kim_yozgan === "user" ? "chat-user" : "chat-fenix"}`}>
+                        {m.xabar}
+                      </div>
                     </div>
                   ))}
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    value={negaXabari}
-                    onChange={(e) => setNegaXabari(e.target.value)}
-                    placeholder="Nega shunday?"
-                    style={{ ...inputStyle, flex: 1 }}
-                    onKeyDown={(e) => e.key === "Enter" && negaSora()}
-                  />
-                  <button onClick={negaSora} style={{ ...btnStyle, marginTop: 0, width: "auto", padding: "0 16px" }}>
-                    Yuborish
-                  </button>
-                </div>
-              </div>
+              )}
 
-              <button onClick={yangiMashq} style={{ ...btnStyle, marginTop: 24 }}>
+              <input
+                className="input"
+                value={negaXabari}
+                onChange={(e) => setNegaXabari(e.target.value)}
+                placeholder="Nega shunday?"
+                onKeyDown={(e) => e.key === "Enter" && negaSora()}
+              />
+
+              <button onClick={yangiMashq} className="btn" style={{ marginTop: 28 }}>
                 Keyingi mashq
               </button>
             </div>
@@ -180,22 +175,3 @@ export function ExercisePage() {
     </div>
   );
 }
-
-const btnStyle: CSSProperties = {
-  marginTop: 16,
-  width: "100%",
-  padding: "12px",
-  borderRadius: 12,
-  border: "none",
-  background: "var(--tg-theme-button-color, #3390ec)",
-  color: "var(--tg-theme-button-text-color, #fff)",
-  fontSize: 15,
-};
-
-const inputStyle: CSSProperties = {
-  padding: "12px",
-  borderRadius: 10,
-  border: "1px solid #333",
-  background: "transparent",
-  color: "inherit",
-};
