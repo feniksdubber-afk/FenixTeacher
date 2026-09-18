@@ -52,14 +52,40 @@ export const registerBook = (data: {
   til_kodi?: string;
 }) => api.post<{ book_id: string; boblar_soni: number }>("/books", data);
 
-/** Fayl to'g'ridan-to'g'ri R2'ga presigned URL orqali yuklanadi (Node'ni band qilmaydi). */
-export async function uploadFileToR2(file: File, upload_url: string): Promise<void> {
-  const res = await fetch(upload_url, {
-    method: "PUT",
-    headers: { "Content-Type": file.type },
-    body: file,
+/**
+ * Fayl to'g'ridan-to'g'ri R2'ga presigned URL orqali yuklanadi (Node'ni
+ * band qilmaydi). fetch() yuklash progressini bermaydi, shuning uchun
+ * XMLHttpRequest ishlatiladi — onProgress orqali foizni kuzatish mumkin.
+ */
+export function uploadFileToR2(
+  file: File,
+  upload_url: string,
+  onProgress?: (foiz: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", upload_url);
+    xhr.setRequestHeader("Content-Type", file.type);
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`R2 yuklash xatosi: HTTP ${xhr.status}`));
+      }
+    });
+
+    xhr.addEventListener("error", () => reject(new Error("R2 yuklash xatosi: tarmoq muammosi")));
+    xhr.addEventListener("timeout", () => reject(new Error("R2 yuklash xatosi: vaqt tugadi")));
+
+    xhr.send(file);
   });
-  if (!res.ok) throw new Error(`R2 yuklash xatosi: HTTP ${res.status}`);
 }
 
 // ---- Brain loop: boblar, mashqlar, "Nega?" suhbat ----

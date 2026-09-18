@@ -23,9 +23,9 @@ export function CoursePage() {
     if (!id) return;
     setXato(null);
     try {
-      setHolat("Yuklanmoqda...");
+      setHolat("Yuklanmoqda... 0%");
       const { file_key, upload_url } = await presignUpload(file.type);
-      await uploadFileToR2(file, upload_url);
+      await uploadFileToR2(file, upload_url, (foiz) => setHolat(`Yuklanmoqda... ${foiz}%`));
 
       setHolat("Kitob qayta ishlanmoqda — bu bir necha daqiqa cho'zilishi mumkin...");
       const natija = await registerBook({

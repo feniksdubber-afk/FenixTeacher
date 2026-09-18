@@ -35,7 +35,7 @@ const RUXSAT_ETILGAN_TURLAR: Record<string, string> = {
 /** Yuklashdan oldin: yangi fayl kaliti + PUT uchun presigned URL. */
 export async function createUploadUrl(
   contentType: string,
-  { expiresInSec = 300 } = {}
+  { expiresInSec = 1800 } = {}
 ): Promise<{ file_key: string; upload_url: string }> {
   const kengaytma = RUXSAT_ETILGAN_TURLAR[contentType];
   if (!kengaytma) {

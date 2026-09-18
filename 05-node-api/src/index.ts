@@ -1,4 +1,5 @@
 import "dotenv/config";
+import cors from "cors";
 import express from "express";
 import { usersRouter } from "./routes/users.js";
 import { coursesRouter } from "./routes/courses.js";
@@ -11,6 +12,7 @@ import { reportsRouter } from "./routes/reports.js";
 import { ttsRouter } from "./routes/tts.js";
 
 const app = express();
+app.use(cors({ origin: "https://fenix.afsonatv.uz" }));
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req, res) => res.json({ holati: "ishlayapti" }));
