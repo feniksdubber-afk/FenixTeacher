@@ -186,6 +186,42 @@ body::before {
 .toc-row.is-disabled { color: var(--ink-dim); cursor: default; }
 .toc-row.is-disabled .toc-name { color: var(--ink-dim); }
 
+/* FIX (#progress-bar): bob darajasidagi progress endi ko'rinadi
+   (backend avval hisoblardi, lekin hech qayerda chiqarilmasdi). */
+.toc-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.toc-progress-track {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.toc-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--gold);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.toc-row.is-done .toc-progress-fill { background: var(--success); }
+
+.toc-progress-label {
+  font-size: 11px;
+  color: var(--ink-dim);
+  min-width: 28px;
+  text-align: right;
+}
+
+.toc-row.is-done .toc-name { color: var(--success); }
+
 /* ---- Buttons & inputs ---- */
 .btn {
   display: block;
