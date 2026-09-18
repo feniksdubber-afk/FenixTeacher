@@ -366,11 +366,51 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
 
   if (!togrimi) {
     try {
-      await query(
-        `INSERT INTO error_bank (user_id, exercise_id, xato_matni, sabab_taxmini)
-         VALUES ($1,$2,$3,'aniqlanmagan')`,
-        [userId, exercise.id, `"${exercise.savol}" mashqida: ${parsed.data.javob}`]
-      );
+      const xatoMatni = `"${exercise.savol}" mashqida: ${parsed.data.javob}`;
+
+      // FIX: avval shu foydalanuvchining shu MAVZU bo'yicha oxirgi
+      // xatosi bor-yo'qligini tekshiramiz (exercises.mavzu ustuni
+      // aynan shu bog'lanish uchun mo'ljallangan — sxemadagi izohga
+      // qarang). `xato_matni` har safar savol+javobga qarab o'zgarib
+      // turadi, shuning uchun aniq matn bo'yicha solishtirish deyarli
+      // hech qachon mos kelmaydi — mavzu esa barqaror kalit.
+      // Topilsa — yangi qator ochish o'rniga takrorlanish_soni'ni
+      // oshiramiz va qayta_korsatish_at'ni (SM-2 uslubidagi oddiy
+      // o'suvchi interval bilan) yangilaymiz.
+      let existing: { id: string; takrorlanish_soni: number } | undefined;
+      if (exercise.mavzu) {
+        [existing] = await query<{ id: string; takrorlanish_soni: number }>(
+          `SELECT eb.id, eb.takrorlanish_soni
+           FROM error_bank eb
+           LEFT JOIN exercises e ON e.id = eb.exercise_id
+           WHERE eb.user_id=$1 AND e.mavzu=$2
+           ORDER BY eb.created_at DESC LIMIT 1`,
+          [userId, exercise.mavzu]
+        );
+      }
+
+      // Oddiy o'suvchi jadval (kun): 1, 3, 7, 14, 30 (keyin 30da to'xtaydi).
+      const INTERVALLAR_KUN = [1, 3, 7, 14, 30];
+
+      if (existing) {
+        const yangiSoni = existing.takrorlanish_soni + 1;
+        const intervalKun = INTERVALLAR_KUN[Math.min(yangiSoni - 1, INTERVALLAR_KUN.length - 1)];
+        await query(
+          `UPDATE error_bank
+           SET takrorlanish_soni=$2,
+               xato_matni=$3,
+               exercise_id=$4,
+               qayta_korsatish_at = now() + ($5 || ' days')::interval
+           WHERE id=$1`,
+          [existing.id, yangiSoni, xatoMatni, exercise.id, intervalKun]
+        );
+      } else {
+        await query(
+          `INSERT INTO error_bank (user_id, exercise_id, xato_matni, sabab_taxmini, qayta_korsatish_at)
+           VALUES ($1,$2,$3,'aniqlanmagan', now() + interval '1 day')`,
+          [userId, exercise.id, xatoMatni]
+        );
+      }
     } catch (err) {
       console.error("[exercises] error_bank yozishda xato:", err);
     }
@@ -378,10 +418,10 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
 
   try {
     await recordExerciseOutcome({
+      natija: baho.natija,
       userId,
       courseId: exercise.course_id,
       mavzu: exercise.mavzu,
-      togrimi,
     });
   } catch (err) {
     console.error("[exercises] recordExerciseOutcome xato:", err);
@@ -390,13 +430,14 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
   // user_progress yangilanishi. ESLATMA: aniq "bob nechta mashqdan
   // iborat" degan meyor hozircha yo'q, shuning uchun oddiy
   // qadam-qadam evristika ishlatilgan — to'g'ri javob uchun +8%,
-  // qisman/noto'g'ri uchun +2% (urinish ham hisobga olinadi), 100%da
-  // to'xtaydi. Bu real progress-bar emas, taxminiy ko'rsatkich —
-  // keyinroq aniqroq meyor (masalan mashqlar soni/bob) bilan
-  // almashtirish kerak bo'ladi.
+  // qisman uchun +5%, to'liq noto'g'ri uchun +2% (urinish ham hisobga
+  // olinadi), 100%da to'xtaydi. FIX: avval "qisman" ham +2% olardi —
+  // to'liq xato bilan bir xil jazolanardi. Bu real progress-bar emas,
+  // taxminiy ko'rsatkich — keyinroq aniqroq meyor (masalan mashqlar
+  // soni/bob) bilan almashtirish kerak bo'ladi.
   if (exercise.chapter_id) {
     try {
-      const qadam = togrimi ? 8 : 2;
+      const qadam = togrimi ? 8 : baho.natija === "qisman" ? 5 : 2;
       await query(
         `INSERT INTO user_progress (user_id, course_id, chapter_id, foiz_bajarilgan, boshlangan_at, yakunlangan_at)
          VALUES ($1,$2,$3, LEAST(100, $4), now(), NULL)

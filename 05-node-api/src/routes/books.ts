@@ -14,6 +14,37 @@ import { createDownloadUrl } from "../services/r2.js";
 export const booksRouter = Router();
 booksRouter.use(telegramAuth);
 
+async function currentUserId(telegramId: number): Promise<string | null> {
+  const [row] = await query<{ id: string }>(
+    `SELECT id FROM users WHERE telegram_id=$1 AND deleted_at IS NULL`,
+    [telegramId]
+  );
+  return row?.id ?? null;
+}
+
+async function ownsCourse(courseId: string, userId: string): Promise<boolean> {
+  const [row] = await query<{ id: string }>(
+    `SELECT id FROM courses WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
+    [courseId, userId]
+  );
+  return !!row;
+}
+
+/** Kitob berilgan foydalanuvchining kursiga tegishli bo'lsa qaytaradi,
+ * aks holda (topilmasa yoki begona kursga tegishli bo'lsa) null. */
+async function getOwnedBook(
+  bookId: string,
+  userId: string
+): Promise<{ id: string } & Record<string, unknown> | null> {
+  const [row] = await query<{ id: string }>(
+    `SELECT b.* FROM books b
+     JOIN courses c ON c.id = b.course_id
+     WHERE b.id=$1 AND c.user_id=$2 AND c.deleted_at IS NULL`,
+    [bookId, userId]
+  );
+  return row ?? null;
+}
+
 const RegisterBookSchema = z.object({
   course_id: z.string().uuid(),
   nomi: z.string().min(1),
@@ -26,8 +57,21 @@ const RegisterBookSchema = z.object({
  * 1) Kitobni DB'ga ro'yxatdan o'tkazadi (holati=jarayonda, fayl_yoli=file_key)
  * 2) file_key uchun vaqtinchalik presigned GET URL yasaydi (PDF-service
  *    o'zi R2 credential'iga ega bo'lmasin — faqat shu URL orqali o'qiydi)
- * 3) PDF-service'ga /process chaqiradi, natijani kutadi
- * 4) chapters jadvaliga yozadi
+ * 3) PDF-service'ga /process chaqiradi (job_id oladi) va DARHOL 202 bilan
+ *    qaytadi — natijani END-TO-END kutmaydi
+ * 4) Qayta ishlash fonda (background) davom etadi; mijoz holatni
+ *    GET /books/:id orqali pollab turadi (qayta_ishlash_holati:
+ *    jarayonda -> tayyor|xato)
+ *
+ * FIX (#8): avval shu handler PDF-service tayyor bo'lguncha SINXRON
+ * kutardi (`waitForPdfJob(..., {timeoutMs: 10*60*1000})` — 10
+ * daqiqagacha). Mobil Telegram Mini App'da bu HTTP/WebView
+ * timeout'lari, fon rejimiga o'tish yoki tarmoq uzilishi sababli
+ * amalda ishlamas edi (frontend hech qanday polling-fallback
+ * qilmasdi, faqat bitta uzun `await`). Endi so'rov faqat job'ni
+ * boshlab, holatini darhol qaytaradi — qolgan ishni fon jarayoni
+ * bajaradi va natijani DB'ga yozadi, xuddi shunday mijoz uni keyin
+ * pollab o'qiydi.
  *
  * ESLATMA: fayl_hash orqali duplikat tekshiruvi hozircha olib
  * tashlandi (fayl endi R2'da, Node uni o'qib hash chiqarmaydi —
@@ -41,69 +85,123 @@ booksRouter.post("/", async (req, res) => {
   }
   const { course_id, nomi, turi, file_key, til_kodi } = parsed.data;
 
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+  if (!(await ownsCourse(course_id, userId))) {
+    return res.status(404).json({ xato: "kurs topilmadi" });
+  }
+
   const [book] = await query<{ id: string }>(
     `INSERT INTO books (course_id, nomi, turi, fayl_yoli, qayta_ishlash_holati)
      VALUES ($1,$2,$3,$4,'jarayonda') RETURNING id`,
     [course_id, nomi, turi, file_key]
   );
 
+  let job_id: string;
   try {
     const file_url = await createDownloadUrl(file_key, { expiresInSec: 30 * 60 });
-    const { job_id } = await startPdfProcessing(book.id, file_url, til_kodi);
-    const natija = await waitForPdfJob(job_id, { timeoutMs: 10 * 60 * 1000 });
-
-    if (natija.holati !== "tayyor") {
-      await query(
-        `UPDATE books SET qayta_ishlash_holati='xato', qayta_ishlash_xatosi=$2 WHERE id=$1`,
-        [book.id, String(natija.xato_matni ?? "noma'lum xato")]
-      );
-      return res.status(502).json({ xato: "PDF qayta ishlash muvaffaqiyatsiz", natija });
-    }
-
-    const boblar = (natija.natija as any)?.boblar ?? [];
-    for (const [i, bob] of boblar.entries()) {
-      await query(
-        `INSERT INTO chapters (book_id, nomi, matn, sahifa_boshi, sahifa_oxiri, tartib_raqami, bounding_boxes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [
-          book.id,
-          `${bob.unit_nomi} — ${bob.turi}${bob.nomi ? ": " + bob.nomi : ""}`,
-          bob.matn,
-          bob.sahifa_boshi,
-          bob.sahifa_oxiri,
-          i + 1,
-          JSON.stringify(bob.bounding_boxes ?? []),
-        ]
-      );
-    }
-
-    await query(`UPDATE books SET qayta_ishlash_holati='tayyor' WHERE id=$1`, [book.id]);
-
-    res.status(201).json({ book_id: book.id, boblar_soni: boblar.length });
+    ({ job_id } = await startPdfProcessing(book.id, file_url, til_kodi));
   } catch (err) {
     const xato_matni = err instanceof Error ? err.message : String(err);
     await query(
       `UPDATE books SET qayta_ishlash_holati='xato', qayta_ishlash_xatosi=$2 WHERE id=$1`,
       [book.id, xato_matni]
     );
-    res.status(500).json({ xato: xato_matni });
+    return res.status(502).json({ xato: "PDF-service'ni ishga tushirib bo'lmadi", tafsilot: xato_matni });
   }
+
+  // Mijozga darhol javob — jarayon davom etmoqda. Mijoz
+  // GET /books/:id orqali qayta_ishlash_holati'ni pollab turadi.
+  res.status(202).json({ book_id: book.id, holati: "jarayonda" });
+
+  // Qolgan qism fonda: job tugashini kutib, natijani DB'ga yozadi.
+  // So'rov-javob sikli allaqachon yopilgan, shuning uchun xatolar
+  // faqat log'ga va books.qayta_ishlash_xatosi'ga yoziladi.
+  void (async () => {
+    try {
+      const natija = await waitForPdfJob(job_id, { timeoutMs: 10 * 60 * 1000 });
+
+      if (natija.holati !== "tayyor") {
+        await query(
+          `UPDATE books SET qayta_ishlash_holati='xato', qayta_ishlash_xatosi=$2 WHERE id=$1`,
+          [book.id, String(natija.xato_matni ?? "noma'lum xato")]
+        );
+        return;
+      }
+
+      const boblar = (natija.natija as any)?.boblar ?? [];
+      for (const [i, bob] of boblar.entries()) {
+        await query(
+          `INSERT INTO chapters (book_id, nomi, matn, sahifa_boshi, sahifa_oxiri, tartib_raqami, bounding_boxes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [
+            book.id,
+            // FIX (#10): `bob.turi` endi generic (nemis bo'lmagan)
+            // darsliklar uchun bo'sh/`null` bo'lishi mumkin (qarang
+            // chapter_splitter.py) — shablon buni "null" degan matn
+            // sifatida chiqarib qo'ymasligi uchun moslashtirildi.
+            [bob.unit_nomi, bob.turi].filter(Boolean).join(" — ") +
+              (bob.nomi ? ": " + bob.nomi : ""),
+            bob.matn,
+            bob.sahifa_boshi,
+            bob.sahifa_oxiri,
+            i + 1,
+            JSON.stringify(bob.bounding_boxes ?? []),
+          ]
+        );
+      }
+
+      await query(`UPDATE books SET qayta_ishlash_holati='tayyor' WHERE id=$1`, [book.id]);
+    } catch (err) {
+      const xato_matni = err instanceof Error ? err.message : String(err);
+      console.error(`[books] fon jarayonida xato (book_id=${book.id}):`, xato_matni);
+      try {
+        await query(
+          `UPDATE books SET qayta_ishlash_holati='xato', qayta_ishlash_xatosi=$2 WHERE id=$1`,
+          [book.id, xato_matni]
+        );
+      } catch (dbErr) {
+        console.error(`[books] xato holatini DB'ga yozib bo'lmadi (book_id=${book.id}):`, dbErr);
+      }
+    }
+  })();
 });
 
 booksRouter.get("/:id", async (req, res) => {
-  const [book] = await query(`SELECT * FROM books WHERE id=$1`, [req.params.id]);
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const book = await getOwnedBook(req.params.id, userId);
   if (!book) return res.status(404).json({ xato: "kitob topilmadi" });
   res.json(book);
 });
 
 /** Kitobning boblari — Mini App'da o'quvchi qaysi bobda mashq
  * qilishni tanlashi uchun (matn o'zi bu yerda qaytarilmaydi, faqat
- * ro'yxat — matn hajmi katta bo'lishi mumkin). */
+ * ro'yxat — matn hajmi katta bo'lishi mumkin).
+ *
+ * FIX (#progress-bar): `exercises.ts` har javobdan keyin
+ * `user_progress.foiz_bajarilgan`ni yangilab boradi, lekin bu
+ * ma'lumot hech qanday endpoint orqali qaytarilmagani uchun
+ * frontend'da hech qachon ko'rsatilmasdi — o'lik (write-only)
+ * xususiyat edi. Endi shu joyga LEFT JOIN qo'shildi: har bob uchun
+ * SHU foydalanuvchining progressi (`foiz_bajarilgan`, `yakunlangan`)
+ * ham qaytadi (progress yozuvi hali yo'q bo'lsa — 0/false). */
 booksRouter.get("/:id/chapters", async (req, res) => {
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const book = await getOwnedBook(req.params.id, userId);
+  if (!book) return res.status(404).json({ xato: "kitob topilmadi" });
+
   const chapters = await query(
-    `SELECT id, nomi, tartib_raqami, sahifa_boshi, sahifa_oxiri
-     FROM chapters WHERE book_id=$1 ORDER BY tartib_raqami`,
-    [req.params.id]
+    `SELECT c.id, c.nomi, c.tartib_raqami, c.sahifa_boshi, c.sahifa_oxiri,
+            COALESCE(up.foiz_bajarilgan, 0) AS foiz_bajarilgan,
+            (up.yakunlangan_at IS NOT NULL) AS yakunlangan
+     FROM chapters c
+     LEFT JOIN user_progress up ON up.chapter_id = c.id AND up.user_id = $2
+     WHERE c.book_id=$1 ORDER BY c.tartib_raqami`,
+    [req.params.id, userId]
   );
   res.json(chapters);
 });
