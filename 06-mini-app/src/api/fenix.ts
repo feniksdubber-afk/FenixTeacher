@@ -50,7 +50,15 @@ export const registerBook = (data: {
   turi: "lehrbuch" | "arbeitsbuch" | "audio" | "qoshimcha";
   file_key: string;
   til_kodi?: string;
-}) => api.post<{ book_id: string; boblar_soni: number }>("/books", data);
+}) => api.post<{ book_id: string; holati: string }>("/books", data);
+
+/** FIX (#8): kitob registratsiyasi endi darhol qaytadi (202,
+ * holati='jarayonda') — qayta ishlash fonda davom etadi. Frontend
+ * shu funksiya bilan holatni pollab, tayyor/xato bo'lguncha kutadi. */
+export const getBook = (bookId: string) =>
+  api.get<{ id: string; qayta_ishlash_holati: string; qayta_ishlash_xatosi: string | null }>(
+    `/books/${bookId}`
+  );
 
 /**
  * Fayl to'g'ridan-to'g'ri R2'ga presigned URL orqali yuklanadi (Node'ni
@@ -96,6 +104,10 @@ export interface Chapter {
   tartib_raqami: number;
   sahifa_boshi: number | null;
   sahifa_oxiri: number | null;
+  // FIX (#progress-bar): backend endi shu ikkalasini ham qaytaradi
+  // (avval user_progress hisoblanardi-yu hech qayerda ko'rsatilmasdi).
+  foiz_bajarilgan: number;
+  yakunlangan: boolean;
 }
 
 export const listChapters = (bookId: string) => api.get<Chapter[]>(`/books/${bookId}/chapters`);
