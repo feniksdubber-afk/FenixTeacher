@@ -7,6 +7,16 @@ Tozalash qoidalari:
    ("The German Bookshop...") — chapter matniga kirmaydi.
 2. Ikonka-OCR-artefaktlari (masalan tinglash ikonkasi "tJ 0 '"'" QJ")
    — lug'atsiz, juda qisqa aralash belgilar — filtrlanadi.
+
+FIX (#9): avval `extract_page(pdf_path, page_number)` HAR CHAQIRISHDA
+`pdfplumber.open(pdf_path)`ni yangidan ochardi. `json_builder.py` buni
+har SAHIFA uchun alohida chaqirar edi (194 sahifalik kitobda — 194
+marta ochish/yopish/qayta parslash), shu esa ~62 soniyalik qayta
+ishlash vaqtining asosiy sababi edi va katta kitoblarda yomonlashardi.
+Endi asosiy mantiq `extract_page_from_pdf(pdf, page_number)`ga
+ko'chirildi — u allaqachon ochilgan `pdfplumber.PDF` obyektini kutadi.
+`extract_page(pdf_path, page_number)` orqaga moslik va CLI (`__main__`)
+uchun qoldirildi — u faylni faqat o'zi chaqirilganda bir marta ochadi.
 """
 
 import re
@@ -42,49 +52,60 @@ _KNOWN_SHORT_WORDS = {
 }
 
 
+def extract_page_from_pdf(pdf: "pdfplumber.PDF", page_number: int) -> dict:
+    """Asosiy mantiq — allaqachon ochilgan `pdf` obyekti bilan ishlaydi,
+    fayl qayta ochilmaydi. Ko'p sahifani ketma-ket chiqarishda shu
+    funksiya ishlatilishi kerak (qarang json_builder.py)."""
+    page = pdf.pages[page_number - 1]
+    page_width, page_height = page.width, page.height
+    footer_top = page_height * FOOTER_ZONE_RATIO
+
+    words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
+    clean_words = []
+    bounding_boxes = []
+    footer_removed = 0
+    garbage_removed = 0
+
+    for w in words:
+        token = w["text"]
+
+        if w["top"] >= footer_top:
+            footer_removed += 1
+            continue  # footer zonasi — chapter matniga kiritilmaydi
+
+        is_garbage = _is_garbage(token)
+        if is_garbage:
+            garbage_removed += 1
+
+        bounding_boxes.append({
+            "word": token,
+            "page": page_number,
+            "x": round(w["x0"] / page_width, 4),
+            "y": round(w["top"] / page_height, 4),
+            "w": round((w["x1"] - w["x0"]) / page_width, 4),
+            "h": round((w["bottom"] - w["top"]) / page_height, 4),
+            "shubhali_ocr": is_garbage,
+        })
+        if not is_garbage:
+            clean_words.append(token)
+
+    return {
+        "page_number": page_number,
+        "matn": " ".join(clean_words),
+        "soz_soni": len(clean_words),
+        "footer_soz_olib_tashlandi": footer_removed,
+        "ikonka_artefakt_olib_tashlandi": garbage_removed,
+        "bounding_boxes": bounding_boxes,
+    }
+
+
 def extract_page(pdf_path: str, page_number: int) -> dict:
+    """Orqaga moslik/CLI uchun qulay wrapper — faylni o'zi ochadi.
+    Ko'p sahifani ketma-ket ishlov berishda BUNI EMAS,
+    `extract_page_from_pdf`ni ishlating (aks holda fayl har safar
+    qayta ochiladi — qarang yuqoridagi FIX izohi)."""
     with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[page_number - 1]
-        page_width, page_height = page.width, page.height
-        footer_top = page_height * FOOTER_ZONE_RATIO
-
-        words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
-        clean_words = []
-        bounding_boxes = []
-        footer_removed = 0
-        garbage_removed = 0
-
-        for w in words:
-            token = w["text"]
-
-            if w["top"] >= footer_top:
-                footer_removed += 1
-                continue  # footer zonasi — chapter matniga kiritilmaydi
-
-            is_garbage = _is_garbage(token)
-            if is_garbage:
-                garbage_removed += 1
-
-            bounding_boxes.append({
-                "word": token,
-                "page": page_number,
-                "x": round(w["x0"] / page_width, 4),
-                "y": round(w["top"] / page_height, 4),
-                "w": round((w["x1"] - w["x0"]) / page_width, 4),
-                "h": round((w["bottom"] - w["top"]) / page_height, 4),
-                "shubhali_ocr": is_garbage,
-            })
-            if not is_garbage:
-                clean_words.append(token)
-
-        return {
-            "page_number": page_number,
-            "matn": " ".join(clean_words),
-            "soz_soni": len(clean_words),
-            "footer_soz_olib_tashlandi": footer_removed,
-            "ikonka_artefakt_olib_tashlandi": garbage_removed,
-            "bounding_boxes": bounding_boxes,
-        }
+        return extract_page_from_pdf(pdf, page_number)
 
 
 if __name__ == "__main__":

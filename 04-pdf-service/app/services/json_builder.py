@@ -8,7 +8,7 @@ import re
 import pdfplumber
 
 from .detector import detect_document_type
-from .text_extractor import extract_page
+from .text_extractor import extract_page_from_pdf
 from .chapter_splitter import find_toc_pages, parse_toc
 
 # ESKI YONDASHUV (olib tashlandi): PRINTED_TO_PHYSICAL_OFFSET har kitob
@@ -77,36 +77,41 @@ def build_book_json(pdf_path: str, book_id: str) -> dict:
     offset = detect_page_offset(pdf_path, list(taxmin_diapazon))
 
     # 3) har bir bo'lim uchun matn + bbox'larni yig'ish
+    # FIX (#9): avval har bir sahifa uchun `extract_page(pdf_path, ...)`
+    # chaqirilardi — u PDF faylni qaytadan ochib-yopardi (194 sahifalik
+    # kitobda 194 marta). Endi fayl SHU YERDA bitta marta ochiladi va
+    # butun bob/sahifa siklida bir xil `pdf` obyekti qayta ishlatiladi.
     chapters = []
-    for entry in toc_entries:
-        boshi, oxiri = entry["sahifa_boshi"], entry["sahifa_oxiri"] or entry["sahifa_boshi"]
-        matn_qismlari = []
-        barcha_bbox = []
-        xato_sahifalar = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for entry in toc_entries:
+            boshi, oxiri = entry["sahifa_boshi"], entry["sahifa_oxiri"] or entry["sahifa_boshi"]
+            matn_qismlari = []
+            barcha_bbox = []
+            xato_sahifalar = []
 
-        for page_num in range(boshi, oxiri + 1):
-            physical_page = page_num + offset
-            try:
-                page_result = extract_page(pdf_path, physical_page)
-                matn_qismlari.append(page_result["matn"])
-                for bbox in page_result["bounding_boxes"]:
-                    bbox["page"] = page_num  # chop etilgan sahifa raqamiga qaytariladi
-                barcha_bbox.extend(page_result["bounding_boxes"])
-            except Exception as e:
-                xato_sahifalar.append({"sahifa": page_num, "xato": str(e)})
+            for page_num in range(boshi, oxiri + 1):
+                physical_page = page_num + offset
+                try:
+                    page_result = extract_page_from_pdf(pdf, physical_page)
+                    matn_qismlari.append(page_result["matn"])
+                    for bbox in page_result["bounding_boxes"]:
+                        bbox["page"] = page_num  # chop etilgan sahifa raqamiga qaytariladi
+                    barcha_bbox.extend(page_result["bounding_boxes"])
+                except Exception as e:
+                    xato_sahifalar.append({"sahifa": page_num, "xato": str(e)})
 
-        chapters.append({
-            "book_id": book_id,
-            "unit_raqami": entry["unit_raqami"],
-            "unit_nomi": entry["unit_nomi"],
-            "turi": entry["turi"],
-            "nomi": entry["nomi"],
-            "sahifa_boshi": boshi,
-            "sahifa_oxiri": oxiri,
-            "matn": "\n\n".join(matn_qismlari),
-            "bounding_boxes": barcha_bbox,
-            "xato_sahifalar": xato_sahifalar or None,
-        })
+            chapters.append({
+                "book_id": book_id,
+                "unit_raqami": entry["unit_raqami"],
+                "unit_nomi": entry["unit_nomi"],
+                "turi": entry["turi"],
+                "nomi": entry["nomi"],
+                "sahifa_boshi": boshi,
+                "sahifa_oxiri": oxiri,
+                "matn": "\n\n".join(matn_qismlari),
+                "bounding_boxes": barcha_bbox,
+                "xato_sahifalar": xato_sahifalar or None,
+            })
 
     return {
         "book_id": book_id,
