@@ -54,11 +54,22 @@ export function ChaptersPage() {
                 onClick={() => navigate(`/chapters/${c.id}/practice`)}
                 onMouseEnter={() => setTanlangan(i)}
                 onMouseLeave={() => setTanlangan(null)}
-                className="toc-row"
+                className={`toc-row ${c.yakunlangan ? "is-done" : ""}`}
               >
                 <span className="toc-num">{rimRaqam(c.tartib_raqami)}</span>
                 <span className="toc-name">{c.nomi ?? `Bob ${c.tartib_raqami}`}</span>
                 <span className="toc-leader" />
+                {/* FIX (#progress-bar): backend bu ma'lumotni hisoblab
+                    kelardi, lekin hech qayerda ko'rsatilmasdi. */}
+                <span className="toc-progress" aria-label={`${Math.round(c.foiz_bajarilgan)}% bajarilgan`}>
+                  <span className="toc-progress-track">
+                    <span
+                      className="toc-progress-fill"
+                      style={{ width: `${Math.min(100, Math.max(0, c.foiz_bajarilgan))}%` }}
+                    />
+                  </span>
+                  <span className="toc-progress-label">{Math.round(c.foiz_bajarilgan)}%</span>
+                </span>
               </button>
             ))}
           </div>
