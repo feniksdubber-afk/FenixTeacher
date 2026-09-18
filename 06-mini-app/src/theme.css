@@ -174,6 +174,9 @@ body::before {
 }
 
 .toc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
   color: var(--ink-dim);
   white-space: nowrap;
@@ -185,40 +188,6 @@ body::before {
 .toc-status.is-error { color: var(--error); }
 .toc-row.is-disabled { color: var(--ink-dim); cursor: default; }
 .toc-row.is-disabled .toc-name { color: var(--ink-dim); }
-
-/* FIX (#progress-bar): bob darajasidagi progress endi ko'rinadi
-   (backend avval hisoblardi, lekin hech qayerda chiqarilmasdi). */
-.toc-progress {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.toc-progress-track {
-  width: 40px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line-soft);
-  overflow: hidden;
-}
-
-.toc-progress-fill {
-  display: block;
-  height: 100%;
-  background: var(--gold);
-  border-radius: 2px;
-  transition: width 0.2s ease;
-}
-
-.toc-row.is-done .toc-progress-fill { background: var(--success); }
-
-.toc-progress-label {
-  font-size: 11px;
-  color: var(--ink-dim);
-  min-width: 28px;
-  text-align: right;
-}
 
 .toc-row.is-done .toc-name { color: var(--success); }
 
@@ -479,9 +448,25 @@ body::before {
 }
 
 .progress-fill {
+  position: relative;
   height: 100%;
-  background: var(--ember);
+  background: linear-gradient(90deg, var(--ember), var(--gold));
   transition: width 0.4s ease;
+}
+
+/* uchidagi uchqun — SpineBar bilan bir xil "olov" tili */
+.progress-fill::after {
+  content: "";
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 8px 2px rgba(217, 98, 47, 0.7);
+  animation: fx-flicker 1.4s ease-in-out infinite;
 }
 
 .quality-row {
@@ -708,4 +693,369 @@ body::before {
   gap: 14px;
   text-align: center;
   padding: 30px 10px;
+}
+
+
+/* =====================================================================
+   Fenix progress tizimi — SpineBar · ProgressRing · StageProgress
+   ===================================================================== */
+
+/* ---- SpineBar: kitob umurtqasi / ruler ---- */
+.spinebar {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 22px;
+}
+.spinebar.is-sm { display: inline-flex; height: 14px; gap: 3px; }
+.spinebar.is-xs { display: inline-flex; height: 10px; gap: 2px; }
+
+.spinebar-tick {
+  position: relative;
+  flex: 1;
+  height: 64%;
+  background: var(--line);
+  border-radius: 1px 1px 0 0;
+}
+.spinebar-tick.is-major { height: 100%; }
+.is-sm .spinebar-tick { flex: none; width: 3px; height: 100%; }
+.is-xs .spinebar-tick { flex: none; width: 2px; height: 100%; }
+
+.spinebar-tick::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--ember);
+  background: color-mix(in srgb, var(--gold) calc(var(--t) * 100%), var(--ember));
+  transform-origin: bottom;
+  transform: scaleY(var(--lit));
+  transition: transform 0.55s cubic-bezier(0.3, 0.7, 0.2, 1);
+  transition-delay: calc(var(--i) * 14ms);
+}
+
+/* yonib borayotgan uch: yaltirash + yuqoriga uchayotgan uchqun */
+.spinebar-tick.is-head::after {
+  box-shadow: 0 0 9px 1px rgba(217, 98, 47, 0.75);
+  animation: fx-flicker 1.4s ease-in-out infinite;
+}
+.spinebar-tick.is-head::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 5px 1px rgba(201, 154, 74, 0.8);
+  animation: fx-spark 1.4s ease-out infinite;
+  z-index: 1;
+}
+
+/* 100% — hamma chiziq oltinga aylanadi */
+.spinebar.is-complete .spinebar-tick::after {
+  background: var(--gold);
+  box-shadow: 0 0 6px rgba(201, 154, 74, 0.45);
+  animation: fx-glow-once 1s ease-out;
+}
+
+/* noaniq davomiylik (tahlil): olov to'lqini chiziqlar bo'ylab yuguradi */
+.spinebar.is-indeterminate .spinebar-tick::after {
+  transition: none;
+  transform: scaleY(0.12);
+  animation: fx-wave 1.6s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 45ms);
+}
+
+@keyframes fx-wave {
+  0%, 60%, 100% { transform: scaleY(0.12); opacity: 0.45; }
+  28%           { transform: scaleY(1);    opacity: 1; }
+}
+@keyframes fx-flicker {
+  0%, 100% { opacity: 1; }
+  45%      { opacity: 0.72; }
+  70%      { opacity: 0.95; }
+}
+@keyframes fx-spark {
+  0%   { transform: translateY(0) scale(1);    opacity: 0.95; }
+  100% { transform: translateY(-9px) scale(0.3); opacity: 0; }
+}
+@keyframes fx-glow-once {
+  0%   { box-shadow: 0 0 0 rgba(201, 154, 74, 0); filter: brightness(1.6); }
+  100% { box-shadow: 0 0 6px rgba(201, 154, 74, 0.45); filter: brightness(1); }
+}
+
+/* ---- ProgressRing ---- */
+.ring { flex-shrink: 0; display: block; }
+.ring-track { stroke: var(--line); }
+.ring-arc {
+  stroke: var(--success);
+  animation: fx-ring-in 0.9s cubic-bezier(0.3, 0.7, 0.2, 1);
+}
+.ring.is-lit { filter: drop-shadow(0 0 3px rgba(217, 98, 47, 0.45)); }
+.ring.is-done .ring-track { stroke: transparent; }
+.ring-check { stroke: var(--success); }
+@keyframes fx-ring-in { from { stroke-dashoffset: var(--c); } }
+
+.toc-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.toc-progress-label {
+  font-size: 11px;
+  color: var(--ink-dim);
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.toc-row.is-done .toc-progress-label { color: var(--success); }
+
+/* ---- Kurs hero progressi ---- */
+.course-progress { margin-top: 20px; }
+.course-progress-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.course-progress-num {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 34px;
+  line-height: 1;
+  color: var(--gold);
+}
+.course-progress-num small { font-size: 16px; margin-left: 1px; color: var(--ink-dim); }
+
+/* ---- StageProgress: yuklash → tahlil → tayyor ---- */
+.stage {
+  margin-top: 20px;
+  padding: 16px 0 4px;
+  border-top: 1px dotted var(--line);
+}
+.stage-steps {
+  display: flex;
+  gap: 18px;
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.stage-step { display: flex; align-items: center; gap: 6px; }
+.stage-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+}
+.stage-step.is-done { color: var(--gold); }
+.stage-step.is-done .stage-dot { background: var(--gold); border-color: var(--gold); }
+.stage-step.is-active { color: var(--ink); }
+.stage-step.is-active .stage-dot {
+  background: var(--ember);
+  border-color: var(--ember);
+  box-shadow: 0 0 7px rgba(217, 98, 47, 0.8);
+  animation: fx-flicker 1.4s ease-in-out infinite;
+}
+.stage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.stage-text {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.stage-meta {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 20px;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.stage-hint { margin: 12px 0 0; }
+
+/* harakatni kamaytirish sozlamasi */
+@media (prefers-reduced-motion: reduce) {
+  .spinebar-tick::after,
+  .spinebar-tick::before,
+  .ring-arc,
+  .progress-fill::after,
+  .stage-step.is-active .stage-dot { animation: none !important; transition: none !important; }
+  .spinebar.is-indeterminate .spinebar-tick::after {
+    transform: scaleY(calc(0.2 + var(--t) * 0.6));
+    opacity: 0.75;
+  }
+  .spinebar-tick.is-head::before { display: none; }
+}
+
+/* =====================================================================
+   Toast — "qog'oz yorliq" + kuyayotgan fitil
+   ===================================================================== */
+.toasts {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  max-width: 520px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 90;
+  pointer-events: none;
+}
+
+.toast {
+  --tone: var(--gold);
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px 14px 15px 14px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--tone);
+  border-radius: 3px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  cursor: pointer;
+  pointer-events: auto;
+  animation: fx-toast-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.toast.is-tayyor { --tone: var(--success); }
+.toast.is-xato   { --tone: var(--error); }
+.toast.is-info   { --tone: var(--ember); }
+
+.toast.is-leaving {
+  animation: fx-toast-out 0.22s ease-in forwards;
+  pointer-events: none;
+}
+
+.toast-icon { flex-shrink: 0; margin-top: 1px; color: var(--tone); }
+
+.toast-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* fitil: vaqt o'tgan sari qisqaradi, uchida uchqun */
+.toast-fuse {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: linear-gradient(90deg, var(--tone), var(--gold));
+  animation: fx-fuse linear forwards;
+}
+.toast-fuse::after {
+  content: "";
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 7px 2px rgba(217, 98, 47, 0.75);
+  animation: fx-flicker 1s ease-in-out infinite;
+}
+
+@keyframes fx-toast-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes fx-toast-out {
+  to { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+@keyframes fx-fuse {
+  from { width: 100%; }
+  to   { width: 0; }
+}
+
+/* =====================================================================
+   Skeleton — qog'oz-chiziq yuklovchi
+   ===================================================================== */
+.skel {
+  position: relative;
+  display: block;
+  width: var(--w, 100%);
+  height: var(--h, 12px);
+  border-radius: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.skel.is-circle { border-radius: 50%; }
+
+.skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(201, 154, 74, 0.09) 38%,
+    rgba(217, 98, 47, 0.14) 50%,
+    rgba(201, 154, 74, 0.09) 62%,
+    transparent 100%
+  );
+  animation: fx-skel 1.6s ease-in-out infinite;
+}
+@keyframes fx-skel { to { transform: translateX(100%); } }
+
+.spine-tick.skel { max-width: 4px; }
+
+.skel-row { cursor: default; pointer-events: none; align-items: center; }
+.skel-row .toc-leader { transform: none; }
+
+.skel-card {
+  width: 100%;
+  max-width: 320px;
+  height: 190px;
+  border-radius: 2px;
+  transform: rotate(-1.4deg);
+}
+.skel-quality {
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+  margin-top: 20px;
+}
+.skel-ledger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.skel-ledger .toc-leader { transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skel::after { animation: none; display: none; }
+  .toast, .toast.is-leaving { animation: none; }
+  .toast-fuse, .toast-fuse::after { animation: none; }
 }

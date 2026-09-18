@@ -8,6 +8,7 @@ import { VocabPage } from "./pages/VocabPage";
 import { WeeklyReportPage } from "./pages/WeeklyReportPage";
 import { syncUser, FenixUser } from "./api/fenix";
 import { UserContext } from "./context/UserContext";
+import { ToastProvider } from "./context/ToastContext";
 
 function FlameMark() {
   return (
@@ -76,6 +77,7 @@ export function App() {
 
   return (
     <UserContext.Provider value={user}>
+      <ToastProvider>
       <OpeningCurtain done={pardaKetdi} />
       <BrowserRouter>
         <div className="topbar">
@@ -94,6 +96,7 @@ export function App() {
           <Route path="/courses/:courseId/weekly-report" element={<WeeklyReportPage />} />
         </Routes>
       </BrowserRouter>
+      </ToastProvider>
     </UserContext.Provider>
   );
 }
