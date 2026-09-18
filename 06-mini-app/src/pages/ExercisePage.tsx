@@ -10,6 +10,15 @@ import {
   DiscussionMessage,
 } from "../api/fenix";
 
+function boldify(text: string) {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const html = escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  return { __html: html };
+}
+
 export function ExercisePage() {
   const { chapterId } = useParams<{ chapterId: string }>();
 
@@ -136,7 +145,10 @@ export function ExercisePage() {
           {holat === "baholandi" && natija && (
             <div style={{ marginTop: 22 }}>
               <p className={`result-line ${natijaSinfi}`}>{natijaSozi}</p>
-              <p style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink)" }}>{natija.fenix_fikri}</p>
+              <p
+                  style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink)" }}
+                  dangerouslySetInnerHTML={boldify(natija.fenix_fikri)}
+                />
               {natija.togri_javob && <p className="sub" style={{ marginTop: 8 }}>To'g'ri javob: {natija.togri_javob}</p>}
 
               <div className="divider" />
