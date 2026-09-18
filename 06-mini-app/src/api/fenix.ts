@@ -8,6 +8,10 @@ export interface Course {
   maqsad: string | null;
   maqsad_sana: string | null;
   created_at: string;
+  // Kurs darajasidagi umumiy progress (barcha boblar o'rtachasi)
+  foiz_bajarilgan: number;
+  boblar_soni: number;
+  yakunlangan_boblar: number;
 }
 
 export interface Book {
