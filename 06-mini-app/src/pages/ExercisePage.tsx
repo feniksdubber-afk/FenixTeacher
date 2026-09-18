@@ -161,9 +161,10 @@ export function ExercisePage() {
                 <div className="chat-list">
                   {suhbat.map((m, i) => (
                     <div key={i} className={`chat-line ${m.kim_yozgan === "user" ? "is-user" : ""}`}>
-                      <div className={`chat-bubble ${m.kim_yozgan === "user" ? "chat-user" : "chat-fenix"}`}>
-                        {m.xabar}
-                      </div>
+                      <div
+                        className={`chat-bubble ${m.kim_yozgan === "user" ? "chat-user" : "chat-fenix"}`}
+                        dangerouslySetInnerHTML={boldify(m.xabar)}
+                      />
                     </div>
                   ))}
                 </div>
