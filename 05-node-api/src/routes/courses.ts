@@ -55,8 +55,24 @@ coursesRouter.get("/", async (req, res) => {
   if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
 
   const courses = await query(
-    `SELECT id, til_nomi, til_kodi, holati, maqsad, maqsad_sana, created_at
-     FROM courses WHERE user_id=$1 AND deleted_at IS NULL ORDER BY created_at`,
+    `SELECT c.id, c.til_nomi, c.til_kodi, c.holati, c.maqsad, c.maqsad_sana, c.created_at,
+     COALESCE((
+       SELECT ROUND(AVG(COALESCE(up.foiz_bajarilgan, 0)))::int
+       FROM books b
+       JOIN chapters ch ON ch.book_id = b.id
+       LEFT JOIN user_progress up ON up.chapter_id = ch.id AND up.user_id = c.user_id
+       WHERE b.course_id = c.id AND b.deleted_at IS NULL
+     ), 0) AS foiz_bajarilgan,
+     (SELECT COUNT(*)::int
+       FROM books b JOIN chapters ch ON ch.book_id = b.id
+       WHERE b.course_id = c.id AND b.deleted_at IS NULL) AS boblar_soni,
+     (SELECT COUNT(*)::int
+       FROM books b
+       JOIN chapters ch ON ch.book_id = b.id
+       JOIN user_progress up ON up.chapter_id = ch.id AND up.user_id = c.user_id
+       WHERE b.course_id = c.id AND b.deleted_at IS NULL
+         AND up.yakunlangan_at IS NOT NULL) AS yakunlangan_boblar
+     FROM courses c WHERE c.user_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at`,
     [userId]
   );
   res.json(courses);
@@ -67,7 +83,23 @@ coursesRouter.get("/:id", async (req, res) => {
   if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
 
   const [course] = await query(
-    `SELECT c.*, lp.kuchli_tomonlar, lp.zaif_tomonlar, lp.ogrenish_uslubi_taxmin
+    `SELECT c.*, lp.kuchli_tomonlar, lp.zaif_tomonlar, lp.ogrenish_uslubi_taxmin,
+     COALESCE((
+       SELECT ROUND(AVG(COALESCE(up.foiz_bajarilgan, 0)))::int
+       FROM books b
+       JOIN chapters ch ON ch.book_id = b.id
+       LEFT JOIN user_progress up ON up.chapter_id = ch.id AND up.user_id = c.user_id
+       WHERE b.course_id = c.id AND b.deleted_at IS NULL
+     ), 0) AS foiz_bajarilgan,
+     (SELECT COUNT(*)::int
+       FROM books b JOIN chapters ch ON ch.book_id = b.id
+       WHERE b.course_id = c.id AND b.deleted_at IS NULL) AS boblar_soni,
+     (SELECT COUNT(*)::int
+       FROM books b
+       JOIN chapters ch ON ch.book_id = b.id
+       JOIN user_progress up ON up.chapter_id = ch.id AND up.user_id = c.user_id
+       WHERE b.course_id = c.id AND b.deleted_at IS NULL
+         AND up.yakunlangan_at IS NOT NULL) AS yakunlangan_boblar
      FROM courses c
      LEFT JOIN learner_profiles lp ON lp.course_id = c.id AND lp.user_id = c.user_id
      WHERE c.id=$1 AND c.user_id=$2 AND c.deleted_at IS NULL`,
