@@ -324,6 +324,30 @@ CREATE TABLE ai_call_logs (
 );
 CREATE INDEX idx_ai_call_logs_user_created ON ai_call_logs (user_id, created_at DESC);
 
+-- ------------------------------------------------------------
+-- 8.1 TTS QO'NG'IROQLARI LOGI
+-- ------------------------------------------------------------
+-- FIX (#12): avval TTS chaqiruvlari HECH QAYERDA hisobga
+-- olinmasdi — Claude chaqiruvlari `ai_call_logs`ga yozilib narx
+-- nazorat qilinardi, lekin TTS (Edge TTS, o'zi bepul bo'lsa-da)
+-- uchun na log, na rate-limit bor edi: har qanday login qilgan
+-- foydalanuvchi cheksiz miqdorda so'rov yuborishi mumkin edi.
+-- Rate-limiting'ning o'zi (05-node-api/src/routes/tts.ts) hozircha
+-- oddiy in-memory sliding-window bilan amalga oshirilgan (Bosqich 1
+-- uchun yetarli — ko'p instansli deploy'da Redis'ga o'tish kerak
+-- bo'ladi), lekin har bir urinish shu jadvalga ham yoziladi —
+-- keyinchalik suiiste'molni tahlil qilish/kuzatish uchun.
+CREATE TABLE tts_call_logs (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+  til_kodi        TEXT NOT NULL,
+  matn_uzunligi   INTEGER NOT NULL,       -- belgilar soni (matnning o'zi saqlanmaydi)
+  muvaffaqiyatli  BOOLEAN NOT NULL DEFAULT true,
+  xato_matni      TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_tts_call_logs_user_created ON tts_call_logs (user_id, created_at DESC);
+
 -- ============================================================
 -- 9. AI TAKLIFLARI (AI-proposal + bir tugmali tasdiqlash oqimi)
 -- ============================================================
