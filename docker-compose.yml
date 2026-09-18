@@ -1,0 +1,79 @@
+# FenixTeacher — Docker Compose
+#
+# ESLATMA: bu yerda Caddy YO'Q — Hetzner serveringizda allaqachon umumiy
+# Caddy ishlayapti (boshqa loyihalar: Afsona TV va h.k.). Yangi Caddy
+# ko'tarish 80/443 portlarda to'qnashadi. Buning o'rniga bu compose
+# faqat ichki tarmoqda (localhost portlar orqali) ishga tushadi, va
+# mavjud Caddyfile'ga bitta blok qo'shiladi (pastdagi Caddyfile.snippet
+# faylga qarang).
+#
+# Ishga tushirish:
+#   cp .env.example .env   # va to'ldiring
+#   docker compose up -d --build
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fenix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: fenixteacher
+    volumes:
+      - fenix_pg_data:/var/lib/postgresql/data
+      - ./02-db-schema/fenix-db-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "127.0.0.1:5433:5432"   # faqat lokal — tashqariga ochilmaydi
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fenix"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pdf-service:
+    build: ./04-pdf-service
+    restart: unless-stopped
+    environment:
+      NODE_API_URL: http://node-api:4000
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      - node-api
+
+  node-api:
+    build: ./05-node-api
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      DATABASE_URL: postgres://fenix:${POSTGRES_PASSWORD}@postgres:5432/fenixteacher
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      PDF_SERVICE_URL: http://pdf-service:8001
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      GOOGLE_TTS_API_KEY: ${GOOGLE_TTS_API_KEY}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+      R2_BUCKET: ${R2_BUCKET}
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  telegram-bot:
+    build: ./07-telegram-bot
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      MINI_APP_URL: ${MINI_APP_URL}
+      NODE_API_URL: http://node-api:4000
+    depends_on:
+      - node-api
+    # Portlar shart emas — long polling orqali Telegram'ga o'zi ulanadi,
+    # tashqaridan hech kim shu konteynerga murojaat qilmaydi.
+
+volumes:
+  fenix_pg_data:

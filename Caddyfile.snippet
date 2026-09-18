@@ -1,0 +1,24 @@
+# Caddyfile.snippet — mavjud umumiy Caddyfile'ingizga QO'SHIMCHA blok
+# sifatida qo'shing (masalan /etc/caddy/Caddyfile), o'zining alohida
+# Caddy'sini ko'tarmang.
+#
+# Domenni o'zingizniki bilan almashtiring (masalan api.fenixteacher.uz
+# yoki mavjud subdomeningiz). Faqat node-api tashqariga ochiladi —
+# pdf-service va postgres ichki tarmoqda qoladi (compose'da ham faqat
+# 127.0.0.1'ga bog'langan, shuning uchun tashqaridan umuman ko'rinmaydi).
+
+fenix-api.SIZNING-DOMENINGIZ.uz {
+    reverse_proxy 127.0.0.1:4000
+}
+
+# Telegram Mini App frontend (React, 06-mini-app) — statik build.
+# `cd 06-mini-app && npm install && npm run build` dist/ papkasini
+# hosil qiladi, shuni serverga shu yo'lga ko'chiring (masalan
+# /var/www/fenixteacher-miniapp/dist), keyin shu blok ishlaydi.
+# Bu domen .env'dagi MINI_APP_URL bilan bir xil bo'lishi SHART —
+# aks holda bot noto'g'ri manzilga yo'llaydi.
+fenix.SIZNING-DOMENINGIZ.uz {
+    root * /var/www/fenixteacher-miniapp/dist
+    file_server
+    try_files {path} /index.html
+}
