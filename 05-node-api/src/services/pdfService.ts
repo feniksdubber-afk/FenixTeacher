@@ -3,8 +3,18 @@
  * Oqim: kitob yuklanadi → shu yerdan POST /process chaqiriladi →
  * job_id qaytadi → polling bilan GET /status/{job_id} → tayyor
  * bo'lganda natija chapters jadvaliga yoziladi.
+ *
+ * FIX (#2): PDF-service'ning /process va /status endpoint'lari endi
+ * INTERNAL_SERVICE_SECRET talab qiladi (qarang 04-pdf-service/app/main.py) —
+ * shuning uchun har ikki chaqiruvga ham X-Internal-Secret header'i
+ * qo'shildi (avval umuman yuborilmasdi).
  */
 const PDF_SERVICE_URL = process.env.PDF_SERVICE_URL ?? "http://localhost:8001";
+const INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET ?? "";
+
+function internalHeaders(): Record<string, string> {
+  return INTERNAL_SERVICE_SECRET ? { "X-Internal-Secret": INTERNAL_SERVICE_SECRET } : {};
+}
 
 interface ProcessResult {
   job_id: string;
@@ -18,7 +28,7 @@ export async function startPdfProcessing(
 ): Promise<ProcessResult> {
   const res = await fetch(`${PDF_SERVICE_URL}/process`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...internalHeaders() },
     body: JSON.stringify({ book_id: bookId, file_url: fileUrl, til_kodi: tilKodi }),
   });
   if (!res.ok) {
@@ -28,7 +38,7 @@ export async function startPdfProcessing(
 }
 
 export async function getPdfJobStatus(jobId: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${PDF_SERVICE_URL}/status/${jobId}`);
+  const res = await fetch(`${PDF_SERVICE_URL}/status/${jobId}`, { headers: internalHeaders() });
   if (!res.ok) {
     throw new Error(`PDF-service /status xatosi: ${res.status}`);
   }

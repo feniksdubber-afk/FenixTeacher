@@ -18,9 +18,15 @@ export async function recordExerciseOutcome(params: {
   userId: string;
   courseId: string;
   mavzu: string | null;
-  togrimi: boolean; // natija === 'togri'
+  // FIX: avval faqat `togrimi: boolean` bo'lib, "qisman" natija
+  // "notogri" bilan bir xil (full) jazoga tushardi. Endi uchta holat
+  // alohida og'irlik bilan hisoblanadi — qisman javob to'liq xato
+  // emas, lekin to'liq to'g'ri ham emas.
+  natija: "togri" | "notogri" | "qisman";
 }): Promise<void> {
-  const { userId, courseId, mavzu, togrimi } = params;
+  const { userId, courseId, mavzu, natija } = params;
+  const togrimi = natija === "togri";
+  const qisman = natija === "qisman";
   if (!mavzu) return; // mavzu aniqlanmagan bo'lsa profilni yangilash uchun asos yo'q
 
   const [profile] = await query<{
@@ -52,6 +58,22 @@ export async function recordExerciseOutcome(params: {
     zaif = zaif
       .map((z) => (z.mavzu === mavzu ? { ...z, score: Math.max(0, z.score - 0.15) } : z))
       .filter((z) => z.score > 0.1);
+  } else if (qisman) {
+    // "qisman" — to'liq xato emas: zaif tomonga yarim og'irlik bilan
+    // qo'shiladi (0.15 emas — 0.07), kuchli tomondan esa faqat ozgina
+    // pasaytiradi (to'liq to'g'ridagidek nolga tushirmaydi). Doimiy
+    // xato pattern hisobiga ham kirmaydi — bu faqat haqiqiy xatolar
+    // (notogri) uchun mo'ljallangan signal.
+    const mavjudZaif = zaif.find((z) => z.mavzu === mavzu);
+    if (mavjudZaif) {
+      mavjudZaif.score = Math.min(1, mavjudZaif.score + 0.07);
+      mavjudZaif.updated_at = endi;
+    } else {
+      zaif = [...zaif, { mavzu, score: 0.3, updated_at: endi }];
+    }
+    kuchli = kuchli
+      .map((k) => (k.mavzu === mavzu ? { ...k, score: Math.max(0, k.score - 0.05) } : k))
+      .filter((k) => k.score > 0.1);
   } else {
     const mavjud = zaif.find((z) => z.mavzu === mavzu);
     if (mavjud) {
