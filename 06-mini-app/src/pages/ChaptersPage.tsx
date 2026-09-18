@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { listChapters, Chapter } from "../api/fenix";
+import { TocSkeleton } from "../components/Skeleton";
+import { ProgressRing } from "../components/Progress";
 
 const RIM = [
   "", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
@@ -32,7 +34,7 @@ export function ChaptersPage() {
       </div>
 
       {xato && <p className="error-text">{xato}</p>}
-      {chapters === null && !xato && <p className="empty">Yuklanmoqda...</p>}
+      {chapters === null && !xato && <TocSkeleton rows={6} numbered spine />}
       {chapters?.length === 0 && <p className="empty">Bu kitobda bob topilmadi.</p>}
 
       {!!chapters?.length && (
@@ -59,16 +61,9 @@ export function ChaptersPage() {
                 <span className="toc-num">{rimRaqam(c.tartib_raqami)}</span>
                 <span className="toc-name">{c.nomi ?? `Bob ${c.tartib_raqami}`}</span>
                 <span className="toc-leader" />
-                {/* FIX (#progress-bar): backend bu ma'lumotni hisoblab
-                    kelardi, lekin hech qayerda ko'rsatilmasdi. */}
-                <span className="toc-progress" aria-label={`${Math.round(c.foiz_bajarilgan)}% bajarilgan`}>
-                  <span className="toc-progress-track">
-                    <span
-                      className="toc-progress-fill"
-                      style={{ width: `${Math.min(100, Math.max(0, c.foiz_bajarilgan))}%` }}
-                    />
-                  </span>
-                  <span className="toc-progress-label">{Math.round(c.foiz_bajarilgan)}%</span>
+                <span className="toc-progress">
+                  <ProgressRing value={Number(c.foiz_bajarilgan)} done={c.yakunlangan} />
+                  <span className="toc-progress-label">{Math.round(Number(c.foiz_bajarilgan) || 0)}%</span>
                 </span>
               </button>
             ))}

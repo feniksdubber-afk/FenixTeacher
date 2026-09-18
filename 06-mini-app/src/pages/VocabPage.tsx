@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
 import { useParams } from "react-router-dom";
+import { useToast } from "../context/ToastContext";
+import { CardSkeleton, HeroSkeleton } from "../components/Skeleton";
 import { listDueWords, reviewWord, playTts, DueWord } from "../api/fenix";
 
 /** Foydalanuvchi bosgan tugmani SM-2 "sifat" (0-5) qiymatiga o'giradi. */
@@ -12,13 +14,13 @@ const SIFAT_TUGMALARI: { label: string; sifat: number; cls: string }[] = [
 
 export function VocabPage() {
   const { courseId } = useParams<{ courseId: string }>();
+  const toast = useToast();
   const [sozlar, setSozlar] = useState<DueWord[] | null>(null);
   const [indeks, setIndeks] = useState(0);
   const [ochiq, setOchiq] = useState(false);
   const [xato, setXato] = useState<string | null>(null);
   const [yuborilmoqda, setYuborilmoqda] = useState(false);
   const [song, setSong] = useState({ togri: 0, jami: 0 });
-  const [ovozXato, setOvozXato] = useState(false);
 
   useEffect(() => {
     if (!courseId) return;
@@ -38,15 +40,11 @@ export function VocabPage() {
       setOchiq(false);
       setIndeks((i) => i + 1);
     } catch (e) {
-      setXato(e instanceof Error ? e.message : String(e));
+      toast.xato(e instanceof Error ? e.message : String(e));
     } finally {
       setYuborilmoqda(false);
     }
   }
-
-  useEffect(() => {
-    setOvozXato(false);
-  }, [indeks]);
 
   async function tinglash(e: MouseEvent) {
     e.stopPropagation();
@@ -54,7 +52,7 @@ export function VocabPage() {
     try {
       await playTts(joriySoz.soz);
     } catch {
-      setOvozXato(true);
+      toast.info("Ovoz hozircha sozlanmagan");
     }
   }
 
@@ -69,7 +67,9 @@ export function VocabPage() {
   if (sozlar === null) {
     return (
       <div className="page">
-        <p className="empty">Yuklanmoqda...</p>
+        <HeroSkeleton />
+        <div className="progress-track" />
+        <CardSkeleton />
       </div>
     );
   }
@@ -141,7 +141,6 @@ export function VocabPage() {
           </div>
         </div>
       </div>
-      {ovozXato && <span className="sound-warn">Ovoz hozircha sozlanmagan</span>}
 
       {ochiq && (
         <div className="quality-row">

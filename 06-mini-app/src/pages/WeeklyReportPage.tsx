@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { useToast } from "../context/ToastContext";
+import { ReportSkeleton } from "../components/Skeleton";
 import { getWeeklyReport, generateWeeklyReport, WeeklyReport } from "../api/fenix";
 
 export function WeeklyReportPage() {
   const { courseId } = useParams<{ courseId: string }>();
+  const toast = useToast();
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [holat, setHolat] = useState<"yuklanmoqda" | "topilmadi" | "tayyor">("yuklanmoqda");
   const [tuzilmoqda, setTuzilmoqda] = useState(false);
-  const [xato, setXato] = useState<string | null>(null);
 
   useEffect(() => {
     if (!courseId) return;
@@ -22,13 +24,13 @@ export function WeeklyReportPage() {
   async function tuzish() {
     if (!courseId) return;
     setTuzilmoqda(true);
-    setXato(null);
     try {
       const r = await generateWeeklyReport(courseId);
       setReport(r);
       setHolat("tayyor");
+      toast.tayyor("Hisobot yangilandi");
     } catch (e) {
-      setXato(e instanceof Error ? e.message : String(e));
+      toast.xato(e instanceof Error ? e.message : String(e));
     } finally {
       setTuzilmoqda(false);
     }
@@ -41,7 +43,7 @@ export function WeeklyReportPage() {
         {report && <p className="sub">{report.hafta_boshi}</p>}
       </div>
 
-      {holat === "yuklanmoqda" && <p className="empty">Yuklanmoqda...</p>}
+      {holat === "yuklanmoqda" && <ReportSkeleton />}
 
       {holat === "topilmadi" && (
         <p className="empty">
@@ -94,8 +96,6 @@ export function WeeklyReportPage() {
           )}
         </div>
       )}
-
-      {xato && <p className="error-text" style={{ marginTop: 14 }}>{xato}</p>}
 
       <button onClick={tuzish} disabled={tuzilmoqda} className="btn" style={{ marginTop: 26 }}>
         {tuzilmoqda ? "Tuzilmoqda..." : "Shu haftani hisobla"}

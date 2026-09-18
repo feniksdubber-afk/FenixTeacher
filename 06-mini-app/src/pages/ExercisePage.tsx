@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import {
+import { useToast } from "../context/ToastContext";
+import { SpineBar } from "../components/Progress";
   generateExercise,
   submitAnswer,
   discussExercise,
@@ -21,6 +23,7 @@ function boldify(text: string) {
 
 export function ExercisePage() {
   const { chapterId } = useParams<{ chapterId: string }>();
+  const toast = useToast();
 
   const [exercise, setExercise] = useState<NewExercise | null>(null);
   const [javob, setJavob] = useState("");
@@ -30,11 +33,9 @@ export function ExercisePage() {
   const [holat, setHolat] = useState<"boshlanmagan" | "yuklanmoqda" | "javob_kutilmoqda" | "baholandi">(
     "boshlanmagan"
   );
-  const [xato, setXato] = useState<string | null>(null);
 
   async function yangiMashq() {
     if (!chapterId) return;
-    setXato(null);
     setNatija(null);
     setSuhbat([]);
     setJavob("");
@@ -44,14 +45,13 @@ export function ExercisePage() {
       setExercise(yangi);
       setHolat("javob_kutilmoqda");
     } catch (e) {
-      setXato(e instanceof Error ? e.message : String(e));
+      toast.xato(e instanceof Error ? e.message : String(e));
       setHolat("boshlanmagan");
     }
   }
 
   async function javobniYubor() {
     if (!exercise || !javob.trim()) return;
-    setXato(null);
     try {
       const res = await submitAnswer(exercise.id, javob);
       setNatija(res);
@@ -60,7 +60,7 @@ export function ExercisePage() {
         setSuhbat((s) => [...s, { xabar: res.teach_back_kuzatuv_savoli!, kim_yozgan: "fenix" }]);
       }
     } catch (e) {
-      setXato(e instanceof Error ? e.message : String(e));
+      toast.xato(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -73,7 +73,7 @@ export function ExercisePage() {
       const res = await discussExercise(exercise.id, mening);
       setSuhbat((s) => [...s, { xabar: res.xabar, kim_yozgan: "fenix" }]);
     } catch (e) {
-      setXato(e instanceof Error ? e.message : String(e));
+      toast.xato(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -93,8 +93,6 @@ export function ExercisePage() {
         <h1 className="h1">Mashq</h1>
       </div>
 
-      {xato && <p className="error-text">{xato}</p>}
-
       {holat === "boshlanmagan" && (
         <div className="center-note">
           <p className="empty" style={{ margin: "0 auto 20px" }}>
@@ -108,7 +106,9 @@ export function ExercisePage() {
 
       {holat === "yuklanmoqda" && (
         <div className="center-note">
-          <div className="spinner" style={{ margin: "0 auto 14px" }} />
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+            <SpineBar indeterminate ticks={14} size="sm" label="Savol tayyorlanmoqda" />
+          </div>
           <p className="sub">Fenix savol tayyorlamoqda...</p>
         </div>
       )}

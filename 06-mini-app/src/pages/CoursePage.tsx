@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useToast } from "../context/ToastContext";
+import { HeroSkeleton, TocSkeleton } from "../components/Skeleton";
+import { SpineBar, StageProgress } from "../components/Progress";
 import { getCourse, getBook, presignUpload, registerBook, uploadFileToR2, CourseDetail } from "../api/fenix";
 
 function kitobBelgisi(holat: string) {
@@ -40,8 +43,12 @@ async function bobniKutish(
 export function CoursePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const toast = useToast();
   const [course, setCourse] = useState<CourseDetail | null>(null);
   const [holat, setHolat] = useState<string | null>(null);
+  // Yuklash/tahlil bosqichi: yuklashda aniq foiz bor, tahlilda backend foiz bermaydi (indeterminate)
+  const [bosqich, setBosqich] = useState<null | { tur: "yuklash"; foiz: number } | { tur: "tahlil"; boshlandi: number } | { tur: "tayyor" }>(null);
+  const [otdi, setOtdi] = useState(0);
   const [xato, setXato] = useState<string | null>(null);
   const [draging, setDraging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,6 +61,12 @@ export function CoursePage() {
     };
   }, [id]);
 
+  useEffect(() => {
+    if (bosqich?.tur !== "tahlil") return;
+    const t = setInterval(() => setOtdi(Math.floor((Date.now() - bosqich.boshlandi) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [bosqich]);
+
   async function yuklash() {
     if (!id) return;
     setCourse(await getCourse(id));
@@ -65,13 +78,15 @@ export function CoursePage() {
 
   async function handleFileChosen(file: File) {
     if (!id) return;
-    setXato(null);
     try {
-      setHolat("Yuklanmoqda... 0%");
+      setHolat("Fayl yuklanmoqda");
+      setBosqich({ tur: "yuklash", foiz: 0 });
       const { file_key, upload_url } = await presignUpload(file.type);
-      await uploadFileToR2(file, upload_url, (foiz) => setHolat(`Yuklanmoqda... ${foiz}%`));
+      await uploadFileToR2(file, upload_url, (foiz) => setBosqich({ tur: "yuklash", foiz }));
 
-      setHolat("Kitob qayta ishlanmoqda — bir necha daqiqa cho'zilishi mumkin...");
+      setHolat("Kitob tahlil qilinmoqda — bir necha daqiqa cho'zilishi mumkin");
+      setOtdi(0);
+      setBosqich({ tur: "tahlil", boshlandi: Date.now() });
       const { book_id } = await registerBook({
         course_id: id,
         nomi: file.name,
@@ -86,18 +101,28 @@ export function CoursePage() {
         throw new Error(natija.xato ?? "PDF qayta ishlashda xato");
       }
 
-      setHolat("Tayyor");
+      setHolat("Kitob tayyor — boblar ro'yxatiga o'tishingiz mumkin");
+      setBosqich({ tur: "tayyor" });
+      toast.tayyor("Kitob tayyor");
       await yuklash();
     } catch (e) {
-      setXato(e instanceof Error ? e.message : String(e));
+      toast.xato(e instanceof Error ? e.message : String(e));
       setHolat(null);
+      setBosqich(null);
     }
   }
 
   if (!course) {
     return (
       <div className="page">
-        <p className="empty">{xato ?? "Yuklanmoqda..."}</p>
+        {xato ? (
+          <p className="error-text">{xato}</p>
+        ) : (
+          <>
+            <HeroSkeleton progress />
+            <TocSkeleton rows={3} trailing="text" />
+          </>
+        )}
       </div>
     );
   }
@@ -107,6 +132,20 @@ export function CoursePage() {
       <div className="hero">
         <h1 className="h1">{course.til_nomi}</h1>
         <p className="sub">{course.holati}</p>
+        {course.boblar_soni > 0 && (
+          <div className="course-progress">
+            <div className="course-progress-head">
+              <span className="course-progress-num">
+                {Math.round(Number(course.foiz_bajarilgan) || 0)}
+                <small>%</small>
+              </span>
+              <span className="sub">
+                {course.yakunlangan_boblar}/{course.boblar_soni} bob yakunlangan
+              </span>
+            </div>
+            <SpineBar value={Number(course.foiz_bajarilgan)} ticks={20} label="Kurs progressi" />
+          </div>
+        )}
       </div>
 
       <div className="link-row">
@@ -135,7 +174,12 @@ export function CoursePage() {
               >
                 <span className="toc-name">{b.nomi}</span>
                 <span className="toc-leader" />
-                <span className={`toc-status ${s.cls}`}>{s.label}</span>
+                <span className={`toc-status ${s.cls}`}>
+                  {b.qayta_ishlash_holati === "jarayonda" && (
+                    <SpineBar indeterminate ticks={6} size="xs" label="Tahlil davom etmoqda" />
+                  )}
+                  {s.label}
+                </span>
               </button>
             );
           })}
@@ -172,8 +216,19 @@ export function CoursePage() {
         }}
       />
 
-      {holat && <p className="sub" style={{ marginTop: 14 }}>{holat}</p>}
-      {xato && <p className="error-text" style={{ marginTop: 14 }}>{xato}</p>}
+      {holat && bosqich && (
+        <StageProgress
+          stage={bosqich.tur}
+          foiz={bosqich.tur === "yuklash" ? bosqich.foiz : 0}
+          otdi={otdi}
+          matn={holat}
+          maslahat={
+            bosqich.tur === "tahlil"
+              ? "Sahifadan chiqib ketsangiz ham, kitob fonda tayyorlanaveradi."
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }
