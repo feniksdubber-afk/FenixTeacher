@@ -7,8 +7,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { telegramAuth } from "../middleware/telegramAuth.js";
-import { query } from "../db/pool.js";
-import { startPdfProcessing, waitForPdfJob } from "../services/pdfService.js";
+import { pool, query } from "../db/pool.js";
+import { startExerciseExtraction, startPdfProcessing, waitForPdfJob } from "../services/pdfService.js";
 import { createDownloadUrl } from "../services/r2.js";
 
 export const booksRouter = Router();
@@ -204,4 +204,208 @@ booksRouter.get("/:id/chapters", async (req, res) => {
     [req.params.id, userId]
   );
   res.json(chapters);
+});
+
+// ============================================================
+// book_exercises — darslikdan ajratilgan mashqlar (v10).
+// chapters.matn pipeline'idan MUSTAQIL: unga tegmaydi.
+// ============================================================
+
+interface ExtractedExercise {
+  exercise_number: string;
+  heading_kind: "numeric" | "sub_inherited";
+  xom_matn: string;
+  page_physical: number;
+  page_printed: number | null;
+  bbox: number[] | null;
+  reading_order_position: number;
+  audio_markers: string[];
+  page_type: string | null;
+  needs_review: boolean;
+  needs_review_reason: string | null;
+  chapter_tartib_raqami: number | null;
+}
+
+/** Kitobning mashqlarini BIR tranzaksiyada almashtiradi (DELETE + INSERT):
+ * qayta-extraction idempotent bo'ladi, oraliq holat ko'rinmaydi.
+ * `xom_matn` extractor bergan holda yoziladi — bu yerda o'zgartirilmaydi. */
+async function replaceBookExercises(bookId: string, mashqlar: ExtractedExercise[]): Promise<number> {
+  const chapterRows = await query<{ id: string; tartib_raqami: number }>(
+    `SELECT id, tartib_raqami FROM chapters WHERE book_id=$1`,
+    [bookId]
+  );
+  const chapterIdByOrder = new Map(chapterRows.map((r) => [r.tartib_raqami, r.id]));
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Bir vaqtda ikki marta ishga tushirilsa navbatma-navbat bajariladi
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`book_exercises:${bookId}`]);
+    // Inson tasdiqlagan (tekshirilgan) yozuvlar qayta-extraction'da YO'QOLMASIN:
+    // faqat sahifa + raqam + xom_matn AYNAN bir xil bo'lsa tasdiq saqlanadi.
+    // Matn o'zgargan bo'lsa tasdiq yaroqsiz — yangi yozuv tekshirilmagan bo'ladi.
+    const tasdiqlangan = await client.query(
+      `SELECT page_physical, exercise_number, xom_matn, tekshirilgan_at
+       FROM book_exercises WHERE book_id=$1 AND tekshirilgan`,
+      [bookId]
+    );
+    const tasdiqKaliti = (page: number, raqam: string, matn: string) => `${page}|${raqam}|${matn}`;
+    const tasdiqMap = new Map<string, Date | null>(
+      tasdiqlangan.rows.map((r: any) => [tasdiqKaliti(r.page_physical, r.exercise_number, r.xom_matn), r.tekshirilgan_at])
+    );
+    await client.query(`DELETE FROM book_exercises WHERE book_id=$1`, [bookId]);
+    for (const m of mashqlar) {
+      const kalit = tasdiqKaliti(m.page_physical, m.exercise_number, m.xom_matn);
+      const oldingiTasdiq = tasdiqMap.has(kalit);
+      await client.query(
+        `INSERT INTO book_exercises
+           (book_id, chapter_id, exercise_number, heading_kind, xom_matn,
+            page_physical, page_printed, bbox, reading_order_position,
+            audio_markers, page_type, needs_review, needs_review_reason,
+            tekshirilgan, tekshirilgan_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15)`,
+        [
+          bookId,
+          m.chapter_tartib_raqami != null ? chapterIdByOrder.get(m.chapter_tartib_raqami) ?? null : null,
+          m.exercise_number,
+          m.heading_kind,
+          m.xom_matn,
+          m.page_physical,
+          m.page_printed,
+          JSON.stringify(m.bbox),
+          m.reading_order_position,
+          m.audio_markers,
+          m.page_type,
+          m.needs_review,
+          m.needs_review_reason,
+          oldingiTasdiq,
+          oldingiTasdiq ? tasdiqMap.get(kalit) ?? null : null,
+        ]
+      );
+    }
+    await client.query("COMMIT");
+    return mashqlar.length;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Kitob uchun extractor'ni ishga tushiradi (mavjud kitobni qayta ishlash
+ * ham shu yerdan). Natija fonda book_exercises'ga yoziladi; tekshirish:
+ * GET /books/:id/exercises. Kitob holati (`qayta_ishlash_holati`) O'ZGARMAYDI —
+ * extractor xatosi kitobni "xato"ga tushirmaydi. */
+booksRouter.post("/:id/exercises/extract", async (req, res) => {
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const book = await getOwnedBook(req.params.id, userId);
+  if (!book) return res.status(404).json({ xato: "kitob topilmadi" });
+  if (book.qayta_ishlash_holati !== "tayyor") {
+    return res.status(409).json({ xato: "kitob hali qayta ishlanmagan (holati 'tayyor' emas)" });
+  }
+
+  const chapters = await query<{ tartib_raqami: number; sahifa_boshi: number; sahifa_oxiri: number | null }>(
+    `SELECT tartib_raqami, sahifa_boshi, sahifa_oxiri
+     FROM chapters WHERE book_id=$1 AND sahifa_boshi IS NOT NULL ORDER BY tartib_raqami`,
+    [book.id]
+  );
+
+  let job_id: string;
+  try {
+    const file_url = await createDownloadUrl(String(book.fayl_yoli), { expiresInSec: 30 * 60 });
+    ({ job_id } = await startExerciseExtraction(book.id, file_url, chapters));
+  } catch (err) {
+    const tafsilot = err instanceof Error ? err.message : String(err);
+    return res.status(502).json({ xato: "PDF-service'ni ishga tushirib bo'lmadi", tafsilot });
+  }
+
+  res.status(202).json({ book_id: book.id, job_id, holati: "jarayonda" });
+
+  void (async () => {
+    try {
+      const natija = await waitForPdfJob(job_id, { timeoutMs: 15 * 60 * 1000 });
+      if (natija.holati !== "tayyor") {
+        console.error(`[books] extractor xatosi (book_id=${book.id}):`, natija.xato_matni);
+        return;
+      }
+      const mashqlar = ((natija.natija as any)?.mashqlar ?? []) as ExtractedExercise[];
+      if (mashqlar.length === 0) {
+        // Mavjud yozuvlarni bo'sh natija bilan o'chirib yubormaslik uchun
+        console.error(`[books] extractor 0 ta mashq qaytardi, mavjud yozuvlar saqlandi (book_id=${book.id})`);
+        return;
+      }
+      const soni = await replaceBookExercises(book.id, mashqlar);
+      console.log(`[books] book_exercises yozildi: ${soni} ta (book_id=${book.id})`);
+    } catch (err) {
+      console.error(`[books] mashqlarni yozishda xato (book_id=${book.id}):`, err);
+    }
+  })();
+});
+
+const ListExercisesQuery = z.object({
+  chapter_id: z.string().uuid().optional(),
+  needs_review: z.enum(["0", "1"]).optional(),
+  tekshirilgan: z.enum(["0", "1"]).optional(),
+});
+
+/** Kitob mashqlari. Filtrlar: ?chapter_id=<uuid>  ?needs_review=1|0  ?tekshirilgan=1|0.
+ * needs_review = extractor shubhasi; tekshirilgan = inson tasdiqlagan (ikkisi mustaqil).
+ * `jami` / `needs_review_soni` / `tekshirilgan_soni` — filtrdan QAT'IY NAZAR
+ * butun kitob bo'yicha; `qaytarildi` — shu javobdagi qatorlar soni. */
+booksRouter.get("/:id/exercises", async (req, res) => {
+  const parsed = ListExercisesQuery.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ xato: parsed.error.flatten() });
+  }
+  const { chapter_id, needs_review, tekshirilgan } = parsed.data;
+
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const book = await getOwnedBook(req.params.id, userId);
+  if (!book) return res.status(404).json({ xato: "kitob topilmadi" });
+
+  const where = ["book_id = $1"];
+  const params: unknown[] = [book.id];
+  if (chapter_id) {
+    params.push(chapter_id);
+    where.push(`chapter_id = $${params.length}`);
+  }
+  if (needs_review) {
+    params.push(needs_review === "1");
+    where.push(`needs_review = $${params.length}`);
+  }
+  if (tekshirilgan) {
+    params.push(tekshirilgan === "1");
+    where.push(`tekshirilgan = $${params.length}`);
+  }
+
+  const mashqlar = await query(
+    `SELECT id, chapter_id, exercise_number, heading_kind, xom_matn,
+            page_physical, page_printed, bbox, reading_order_position,
+            audio_markers, page_type, needs_review, needs_review_reason,
+            tekshirilgan, tekshirilgan_at
+     FROM book_exercises
+     WHERE ${where.join(" AND ")}
+     ORDER BY page_physical, reading_order_position`,
+    params
+  );
+  const [totals] = await query<{ jami: number; needs_review_soni: number; tekshirilgan_soni: number }>(
+    `SELECT count(*)::int AS jami,
+            (count(*) FILTER (WHERE needs_review))::int AS needs_review_soni,
+            (count(*) FILTER (WHERE tekshirilgan))::int AS tekshirilgan_soni
+     FROM book_exercises WHERE book_id=$1`,
+    [book.id]
+  );
+
+  res.json({
+    jami: totals.jami,
+    needs_review_soni: totals.needs_review_soni,
+    tekshirilgan_soni: totals.tekshirilgan_soni,
+    qaytarildi: mashqlar.length,
+    mashqlar,
+  });
 });
