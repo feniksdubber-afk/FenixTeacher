@@ -43,6 +43,14 @@ declare global {
         ready: () => void;
         expand: () => void;
         themeParams: Record<string, string>;
+        isVersionAtLeast?: (version: string) => boolean;
+        BackButton?: {
+          isVisible: boolean;
+          show: () => void;
+          hide: () => void;
+          onClick: (cb: () => void) => void;
+          offClick: (cb: () => void) => void;
+        };
         MainButton: {
           text: string;
           show: () => void;
