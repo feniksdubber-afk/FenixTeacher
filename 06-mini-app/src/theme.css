@@ -267,26 +267,27 @@ body::before {
 .input::placeholder { color: var(--ink-dim); font-style: italic; }
 .input:focus { outline: none; border-bottom-color: var(--ember); }
 
-/* ---- Ruled paper textarea for answers ---- */
+/* ---- Ruled paper textarea for answers (daftar: chap tomonda qizil chiziq) ---- */
 .ruled {
   width: 100%;
-  background: repeating-linear-gradient(
-    var(--paper) 0px,
-    var(--paper) 27px,
-    var(--line-soft) 28px
-  );
+  background:
+    linear-gradient(to right, transparent 0 27px, rgba(217, 98, 47, 0.32) 27px 28px, transparent 28px),
+    repeating-linear-gradient(var(--paper) 0px, var(--paper) 27px, var(--line-soft) 28px);
   border: none;
   border-top: 1px solid var(--line);
   color: var(--ink);
   font-family: "Fraunces", serif;
   font-size: 15.5px;
   line-height: 28px;
-  padding: 0 2px;
+  padding: 0 4px 0 40px;
   resize: vertical;
-  min-height: 112px;
+  min-height: 140px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.ruled:focus { outline: none; }
+.ruled::placeholder { color: var(--ink-dim); font-style: italic; }
+.ruled:focus { outline: none; border-top-color: var(--ember); box-shadow: 0 -1px 0 var(--ember); }
+.ruled:read-only { opacity: 0.7; }
 
 /* ---- Question block ---- */
 .question-mark {
@@ -324,36 +325,6 @@ body::before {
 .result-togri { color: var(--success); }
 .result-qisman { color: var(--gold); }
 .result-notogri { color: var(--error); }
-
-/* ---- Chat / teach-back ---- */
-.chat-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 14px 0;
-}
-
-.chat-line { display: flex; }
-.chat-line.is-user { justify-content: flex-end; }
-
-.chat-bubble {
-  max-width: 82%;
-  font-size: 14px;
-  line-height: 1.5;
-  padding: 2px 0;
-}
-
-.chat-fenix {
-  font-family: "Fraunces", serif;
-  font-style: italic;
-  color: var(--ink);
-  border-left: 2px solid var(--ember);
-  padding-left: 10px;
-}
-
-.chat-user {
-  color: var(--ink-dim);
-}
 
 /* ---- Index card (vocab flashcard) ---- */
 .card-stage {
@@ -1058,4 +1029,297 @@ body::before {
   .skel::after { animation: none; display: none; }
   .toast, .toast.is-leaving { animation: none; }
   .toast-fuse, .toast-fuse::after { animation: none; }
+}
+
+/* =====================================================================
+   Mashq xonasi — meta, muhr, Fenix qaydi, baho, "Nega?" suhbati
+   ===================================================================== */
+.room-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.room-tag {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ember);
+  border: 1px solid rgba(217, 98, 47, 0.45);
+  border-radius: 2px;
+  padding: 2px 7px;
+}
+.room-topic .tag-repeat { color: var(--gold); }
+.room-count {
+  margin-left: auto;
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 13px;
+}
+
+.room-busy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  min-height: 46px;
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 14px;
+  color: var(--ink-dim);
+}
+
+.room-result { margin-top: 26px; animation: fx-rise 0.4s ease-out; }
+@keyframes fx-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* Ustoz muhri */
+.verdict { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.verdict .result-line { margin: 0; }
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  transform: rotate(-6deg);
+  flex-shrink: 0;
+  animation: fx-stamp 0.5s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.stamp.result-togri { box-shadow: 0 0 12px rgba(127, 168, 120, 0.25); }
+@keyframes fx-stamp {
+  0%   { transform: rotate(-6deg) scale(1.9); opacity: 0; }
+  55%  { transform: rotate(-6deg) scale(0.92); opacity: 1; }
+  100% { transform: rotate(-6deg) scale(1); }
+}
+
+/* Fenix fikri — chetdagi qayd */
+.fenix-note {
+  display: grid;
+  grid-template-columns: 15px 1fr;
+  gap: 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--ember);
+}
+.fenix-note .msg-mark { margin-top: 4px; }
+.fenix-note-text { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--ink); }
+.msg-mark { color: var(--ember); flex-shrink: 0; filter: drop-shadow(0 0 4px rgba(217, 98, 47, 0.5)); }
+
+/* To'g'ri javob */
+.answer-key {
+  margin-top: 16px;
+  padding: 11px 14px 12px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--success);
+  border-radius: 2px;
+}
+.answer-key-label {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: 4px;
+}
+.answer-key-text {
+  margin: 0;
+  font-family: "Fraunces", serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* Ko'p qirrali baho */
+.score { margin-top: 18px; }
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 2px;
+  font-size: 12.5px;
+}
+.score-key { color: var(--ink-dim); white-space: nowrap; }
+.score-row .toc-leader { transform: none; }
+.score-val {
+  min-width: 34px;
+  text-align: right;
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Nega?" bo'limi */
+.nega { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--line); }
+.nega-title {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-weight: 500;
+  font-size: 26px;
+  margin: 0 0 4px;
+  color: var(--ink);
+}
+.nega-q { color: var(--ember); margin-left: 1px; }
+
+.nega-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.nega-chip {
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.nega-chip:hover:not(:disabled), .nega-chip:active:not(:disabled) {
+  border-color: var(--ember);
+  color: var(--ember);
+  background: rgba(217, 98, 47, 0.07);
+}
+.nega-chip:disabled { opacity: 0.5; cursor: default; }
+
+/* Suhbat oqimi */
+.thread { display: flex; flex-direction: column; gap: 18px; margin: 20px 0 8px; }
+.msg { display: flex; gap: 10px; animation: fx-rise 0.3s ease-out; }
+.msg.is-user { justify-content: flex-end; }
+
+.msg-badge {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(217, 98, 47, 0.1);
+  border: 1px solid rgba(217, 98, 47, 0.35);
+}
+.msg-badge .msg-mark { filter: none; }
+
+.msg-col { min-width: 0; max-width: calc(100% - 36px); }
+.msg-body { font-size: 14px; line-height: 1.6; min-width: 0; word-break: break-word; white-space: pre-wrap; }
+.msg.is-fenix .msg-body {
+  font-family: "Fraunces", serif;
+  font-size: 15.5px;
+  color: var(--ink);
+}
+/* asosiy atama — oltin rangda ajralib turadi */
+.msg-body strong { color: var(--gold); font-weight: 600; }
+
+.msg.is-user .msg-body {
+  max-width: 82%;
+  padding: 9px 13px;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 12px 12px 2px 12px;
+}
+
+.msg-tools { margin-top: 6px; display: flex; gap: 14px; }
+.msg-tool {
+  padding: 2px 0;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.msg-tool:hover, .msg-tool:active { color: var(--ink); }
+
+.msg.is-typing .msg-col { display: flex; align-items: center; gap: 10px; min-height: 26px; }
+.typing-label { font-family: "Fraunces", serif; font-style: italic; font-size: 13px; color: var(--ink-dim); }
+
+/* Fenix yozayotgandek: so'zlar siyoh qurigandek paydo bo'ladi */
+.fx-word { animation: fx-word 0.45s ease-out both; }
+@keyframes fx-word {
+  from { opacity: 0; filter: blur(3px); }
+  to   { opacity: 1; filter: blur(0); }
+}
+
+/* Davomiy savollar: bir qatorda, gorizontal aylantiriladi */
+.nega-chips.is-follow {
+  margin: -6px 0 0;
+  padding: 0 0 4px 36px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.nega-chips.is-follow::-webkit-scrollbar { display: none; }
+.nega-chips.is-follow .nega-chip { flex-shrink: 0; white-space: nowrap; font-size: 12.5px; padding: 6px 12px; }
+
+/* Yozish paneli: ekran pastiga yopishadi, matn bilan o'sadi */
+.composer {
+  position: sticky;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 14px -4px 0;
+  padding: 6px 6px 6px 16px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: 0 -14px 16px -6px var(--paper);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.composer:focus-within {
+  border-color: var(--ember);
+  box-shadow: 0 -14px 16px -6px var(--paper), 0 0 0 3px rgba(217, 98, 47, 0.12);
+}
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  max-height: 120px;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  resize: none;
+  overflow-y: auto;
+  color: var(--ink);
+  font-family: "Inter", sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.composer-input:focus { outline: none; }
+.composer-input::placeholder { color: var(--ink-dim); font-style: italic; }
+.composer-send {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--ember);
+  color: #1c0f06;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease, opacity 0.15s ease;
+}
+.composer-send:active:not(:disabled) { transform: scale(0.94); }
+.composer-send:disabled { background: var(--line); color: var(--ink-dim); cursor: default; opacity: 0.8; }
+
+/* yozish paneli ochiq bo'lsa toast uning ustida chiqadi */
+body:has(.composer) .toasts { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+
+.skel-ruled {
+  height: 140px;
+  border-top: 1px solid var(--line);
+  background: repeating-linear-gradient(var(--paper) 0px, var(--paper) 27px, var(--line-soft) 28px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stamp, .msg, .room-result, .fx-word { animation: none; }
 }
