@@ -33,6 +33,14 @@ export function ChaptersPage() {
         <h1 className="h1">Boblar</h1>
       </div>
 
+      {!!bookId && (
+        <div className="link-row" style={{ padding: "0 20px 6px" }}>
+          <button className="text-link" onClick={() => navigate(`/books/${bookId}/viewer`)}>
+            📖 Kitobni asl holida ko'rish
+          </button>
+        </div>
+      )}
+
       {xato && <p className="error-text">{xato}</p>}
       {chapters === null && !xato && <TocSkeleton rows={6} numbered spine />}
       {chapters?.length === 0 && <p className="empty">Bu kitobda bob topilmadi.</p>}

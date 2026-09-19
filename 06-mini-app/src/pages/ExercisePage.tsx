@@ -338,8 +338,22 @@ export function ExercisePage() {
               {exercise.manba === "kitob" && <span className="tag-repeat"> · kitobdan</span>}
               {exercise.interleaved && <span className="tag-repeat"> · takrorlash</span>}
             </span>
-            <span className="room-count">{raqam}-mashq</span>
+            <span className="room-count">
+              {exercise.manba === "kitob" && exercise.kitob_raqami
+                ? `${exercise.kitob_raqami}-mashq (darslik)`
+                : `${raqam}-mashq`}
+            </span>
           </div>
+
+          {exercise.manba === "kitob" && exercise.rasm_url && (
+            <img
+              src={exercise.rasm_url}
+              alt={`Darslik, ${exercise.kitob_raqami ?? ""}-mashq`}
+              className="book-exercise-image"
+              loading="lazy"
+              style={{ width: "100%", borderRadius: 10, marginTop: 14, display: "block" }}
+            />
+          )}
 
           <p className="question-text">
             <span className="question-mark">&ldquo;</span>
