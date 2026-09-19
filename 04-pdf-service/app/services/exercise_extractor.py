@@ -10,8 +10,12 @@ exercise_extractor (FenixTeacher PDF-service)
   for heading detection only
 - needs_review propagates from a numeric heading to its inherited sub-headings
 """
+import base64
+
 import pdfplumber
 import re
+
+from .page_renderer import PageRenderer
 
 AUDIO_RE = re.compile(r'\bCD\s*\d+\s*,\s*\d+\b')
 EXERCISE_HEAD_RE = re.compile(r'^\s*(\d{1,2})\s*([a-zA-Z]?)\s+([A-ZÄÖÜ„].{3,})')
@@ -351,13 +355,20 @@ def _chapter_for_printed_page(printed, chapters):
     return None
 
 
-def extract_book_exercises(pdf_path, chapters, offset=None):
+def extract_book_exercises(pdf_path, chapters, offset=None, render_images=True):
     """
     Butun kitob bo'yicha: PDF BIR marta ochiladi (json_builder FIX #9 bilan bir xil).
 
     chapters: [{tartib_raqami, sahifa_boshi, sahifa_oxiri}, ...] - chapters jadvalidan.
     offset:   jismoniy_sahifa - chop_etilgan_raqam. None bo'lsa json_builder'dagi
               usul bilan avtomatik aniqlanadi (chapters bo'sh bo'lsa 0).
+    render_images: True bo'lsa, har bir mashq uchun sahifa bo'lagi JPEG'ga
+              kesib olinadi va `rasm_base64` sifatida qaytariladi (Node
+              buni R2'ga yuklaydi). Bitta sahifa faqat bir marta render
+              qilinadi (PageRenderer keshi) - shu sahifadagi barcha
+              mashqlar shu bitta renderdan kesiladi. Render xatosi
+              (masalan buzilgan sahifa) o'sha mashqni to'xtatmaydi -
+              faqat rasmsiz qoladi (`rasm_base64: None`).
 
     Qaytaradi: {sahifa_offseti, sahifalar_soni, mashqlar: [...], xato_sahifalar: [...]}
     Bitta sahifadagi xato butun kitobni to'xtatmaydi - xato_sahifalar'ga yoziladi.
@@ -370,35 +381,50 @@ def extract_book_exercises(pdf_path, chapters, offset=None):
         else:
             offset = 0
 
+    renderer = PageRenderer(pdf_path) if render_images else None
     mashqlar, xato_sahifalar = [], []
-    with pdfplumber.open(pdf_path) as pdf:
-        n_pages = len(pdf.pages)
-        for idx in range(n_pages):
-            physical = idx + 1
-            printed = physical - offset
-            if printed < 1:
-                printed = None
-            try:
-                res = extract_exercises_from_page(pdf.pages[idx], idx, str(physical))
-            except Exception as e:  # noqa: BLE001 - sahifa darajasida izolyatsiya
-                xato_sahifalar.append({'sahifa': physical, 'xato': str(e)})
-                continue
-            chapter_no = _chapter_for_printed_page(printed, chapters)
-            for ex in res['exercises']:
-                mashqlar.append({
-                    'exercise_number': ex['exercise_number'],
-                    'heading_kind': ex['heading_kind'],
-                    'xom_matn': ex['xom_matn'],
-                    'page_physical': physical,
-                    'page_printed': printed,
-                    'bbox': ex['bbox'],
-                    'reading_order_position': ex['reading_order_position'],
-                    'audio_markers': ex['audio_markers'],
-                    'page_type': res['page_type'],
-                    'needs_review': ex['needs_review'],
-                    'needs_review_reason': ex['needs_review_reason'],
-                    'chapter_tartib_raqami': chapter_no,
-                })
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            n_pages = len(pdf.pages)
+            for idx in range(n_pages):
+                physical = idx + 1
+                printed = physical - offset
+                if printed < 1:
+                    printed = None
+                try:
+                    res = extract_exercises_from_page(pdf.pages[idx], idx, str(physical))
+                except Exception as e:  # noqa: BLE001 - sahifa darajasida izolyatsiya
+                    xato_sahifalar.append({'sahifa': physical, 'xato': str(e)})
+                    continue
+                chapter_no = _chapter_for_printed_page(printed, chapters)
+                for ex in res['exercises']:
+                    rasm_base64 = None
+                    if renderer is not None:
+                        try:
+                            jpeg_bytes = renderer.crop_bbox_jpeg_bytes(idx, ex['bbox'])
+                            if jpeg_bytes:
+                                rasm_base64 = base64.b64encode(jpeg_bytes).decode('ascii')
+                        except Exception as e:  # noqa: BLE001 - rasm xatosi matnni to'xtatmasin
+                            xato_sahifalar.append({'sahifa': physical, 'xato': f'rasm render: {e}'})
+                    mashqlar.append({
+                        'exercise_number': ex['exercise_number'],
+                        'heading_kind': ex['heading_kind'],
+                        'xom_matn': ex['xom_matn'],
+                        'page_physical': physical,
+                        'page_printed': printed,
+                        'bbox': ex['bbox'],
+                        'reading_order_position': ex['reading_order_position'],
+                        'audio_markers': ex['audio_markers'],
+                        'page_type': res['page_type'],
+                        'needs_review': ex['needs_review'],
+                        'needs_review_reason': ex['needs_review_reason'],
+                        'chapter_tartib_raqami': chapter_no,
+                        'rasm_base64': rasm_base64,
+                    })
+    finally:
+        if renderer is not None:
+            renderer.close()
+
     return {
         'sahifa_offseti': offset,
         'sahifalar_soni': n_pages,
