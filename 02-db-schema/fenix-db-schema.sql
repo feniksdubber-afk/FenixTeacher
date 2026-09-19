@@ -231,10 +231,49 @@ CREATE TABLE exercises (
   javob_tezligi_ms       INTEGER,
   -- N — interleaving belgisi:
   interleaved_mi         BOOLEAN NOT NULL DEFAULT false,
+  -- v11: darslikdan ajratilgan haqiqiy mashq bilan bog'lanish (AI
+  -- o'zi tuzgan mashqlarda NULL).
+  book_exercise_id       UUID REFERENCES book_exercises(id) ON DELETE SET NULL,
+  -- v12: qaysi dars-sessiyaga va bosqichga tegishli.
+  lesson_session_id      UUID, -- FK lesson_sessions'ga pastda qo'shiladi (jadval tartibi uchun)
+  dars_bosqichi          TEXT
+                           CHECK (dars_bosqichi IN
+                             ('isinish','tushuntirish','amaliyot','qayta_tushuntirish')),
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_exercises_user_created ON exercises (user_id, created_at DESC);
 CREATE INDEX idx_exercises_chapter ON exercises (chapter_id);
+CREATE UNIQUE INDEX uq_exercises_book_exercise
+  ON exercises (book_exercise_id) WHERE book_exercise_id IS NOT NULL;
+CREATE INDEX idx_exercises_book_exercise ON exercises (book_exercise_id);
+
+-- v12: lesson_sessions — chinakam "dars" tuzilishi (4 bosqich):
+-- isinish → tushuntirish → amaliyot ⇄ qayta_tushuntirish → yakun.
+CREATE TABLE lesson_sessions (
+  id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  chapter_id                UUID NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+  holat                     TEXT NOT NULL DEFAULT 'isinish'
+                             CHECK (holat IN
+                               ('isinish','tushuntirish','amaliyot','qayta_tushuntirish','yakunlandi')),
+  tushuntirish_matni        TEXT,
+  joriy_mavzu               TEXT,
+  ketma_ket_notogri_soni    INTEGER NOT NULL DEFAULT 0,
+  qayta_tushuntirilgan_mavzular TEXT[] NOT NULL DEFAULT '{}',
+  mashqlar_soni             INTEGER NOT NULL DEFAULT 0,
+  xulosa_matni              TEXT,
+  boshlangan_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tugagan_at                TIMESTAMPTZ,
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_lesson_sessions_one_active
+  ON lesson_sessions (user_id, chapter_id) WHERE tugagan_at IS NULL;
+CREATE INDEX idx_lesson_sessions_user ON lesson_sessions (user_id, chapter_id, boshlangan_at DESC);
+
+ALTER TABLE exercises
+  ADD CONSTRAINT fk_exercises_lesson_session
+  FOREIGN KEY (lesson_session_id) REFERENCES lesson_sessions(id) ON DELETE SET NULL;
+CREATE INDEX idx_exercises_lesson_session ON exercises (lesson_session_id);
 
 -- ------------------------------------------------------------
 
