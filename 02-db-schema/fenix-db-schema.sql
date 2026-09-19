@@ -106,6 +106,10 @@ CREATE TABLE books (
                       CHECK (qayta_ishlash_holati IN
                         ('kutilmoqda','jarayonda','tayyor','xato')),
   qayta_ishlash_xatosi TEXT,             -- xato bo'lsa log matni
+  sahifalar_render_holati TEXT NOT NULL DEFAULT 'yoq'
+                      CHECK (sahifalar_render_holati IN ('yoq','jarayonda','tayyor','xato')),
+                      -- (v14) PDF-viewer uchun sahifalarni JPEG'ga render qilish holati
+  sahifalar_soni    INTEGER,            -- (v14) render tugagach to'ldiriladi
   deleted_at        TIMESTAMPTZ,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -161,6 +165,7 @@ CREATE TABLE book_exercises (
                           -- inson HAQIQATAN ko'rib tasdiqlagan (needs_review'dan MUSTAQIL)
   tekshirilgan_at        TIMESTAMPTZ,
   strukturasi            JSONB,                  -- kelajak: AI + so'zma-so'z tekshiruvdan o'tgan struktura
+  image_r2_key           TEXT,                   -- (v13) sahifa bo'lagi JPEG, R2 kaliti; NULL = hali yo'q
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -171,6 +176,25 @@ CREATE TABLE book_exercises (
 -- `id` emas, chunki qayta-extraction'da id o'zgaradi.
 CREATE INDEX idx_book_exercises_chapter ON book_exercises (chapter_id, exercise_number);
 CREATE INDEX idx_book_exercises_review ON book_exercises (book_id) WHERE needs_review;
+
+-- ------------------------------------------------------------
+-- book_pages: to'liq PDF-viewer uchun, kitobning HAR bir sahifasi
+-- JPEG sifatida (v14). book_exercises.image_r2_key'dan MUSTAQIL —
+-- u yerda faqat mashqqa tegishli kesma, bu yerda to'liq sahifa.
+-- ------------------------------------------------------------
+
+CREATE TABLE book_pages (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  book_id           UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  page_physical     INTEGER NOT NULL,
+  image_r2_key      TEXT NOT NULL,
+  width_px          INTEGER NOT NULL,
+  height_px         INTEGER NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT uq_book_pages_book_page UNIQUE (book_id, page_physical)
+);
+CREATE INDEX idx_book_pages_book ON book_pages (book_id, page_physical);
 
 -- ============================================================
 -- 3. SO'Z BOYLIGI (Vocabulary + SM-2)
