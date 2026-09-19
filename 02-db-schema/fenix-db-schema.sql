@@ -133,6 +133,45 @@ CREATE TABLE chapters (
 );
 CREATE INDEX idx_chapters_book ON chapters (book_id);
 
+-- ------------------------------------------------------------
+-- book_exercises: darslikdan avtomatik ajratilgan mashqlar (extractor
+-- natijasi). `chapters.matn` pipeline'idan MUSTAQIL — unga tegmaydi.
+-- Asosiy printsip: xom_matn o'zgarmaydi; ishonchsiz aniqlash
+-- o'chirilmaydi, needs_review=true bilan belgilanadi. (migrate-v10)
+-- ------------------------------------------------------------
+
+CREATE TABLE book_exercises (
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  book_id                UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  chapter_id             UUID REFERENCES chapters(id) ON DELETE SET NULL,
+                          -- NULL: mashq hech bir bob sahifa oralig'iga tushmadi
+  exercise_number        TEXT NOT NULL,          -- "1", "1a", "2b"
+  heading_kind           TEXT NOT NULL
+                          CHECK (heading_kind IN ('numeric','sub_inherited')),
+  xom_matn               TEXT NOT NULL,          -- OCR'dan olingan xom matn; hech qachon o'zgartirilmaydi
+  page_physical          INTEGER NOT NULL,       -- PDF'dagi jismoniy sahifa (1-based)
+  page_printed           INTEGER,                -- chop etilgan sahifa raqami (offset bilan)
+  bbox                   JSONB,                  -- [x0, top, x1, bottom], sahifa piksellarida
+  reading_order_position INTEGER NOT NULL,       -- sahifa ichida tartib (0-based)
+  audio_markers          TEXT[] NOT NULL DEFAULT '{}',  -- masalan {"1.3","1.4"}
+  page_type              TEXT,
+  needs_review           BOOLEAN NOT NULL DEFAULT false,
+  needs_review_reason    TEXT,                   -- extractor shubhasi (inson ko'rishi kerakmi)
+  tekshirilgan           BOOLEAN NOT NULL DEFAULT false,
+                          -- inson HAQIQATAN ko'rib tasdiqlagan (needs_review'dan MUSTAQIL)
+  tekshirilgan_at        TIMESTAMPTZ,
+  strukturasi            JSONB,                  -- kelajak: AI + so'zma-so'z tekshiruvdan o'tgan struktura
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT uq_book_exercises_page_order
+    UNIQUE (book_id, page_physical, reading_order_position)
+);
+-- Lösungen bog'lash kaliti (rejalashtirilgan): (chapter_id, exercise_number) —
+-- `id` emas, chunki qayta-extraction'da id o'zgaradi.
+CREATE INDEX idx_book_exercises_chapter ON book_exercises (chapter_id, exercise_number);
+CREATE INDEX idx_book_exercises_review ON book_exercises (book_id) WHERE needs_review;
+
 -- ============================================================
 -- 3. SO'Z BOYLIGI (Vocabulary + SM-2)
 -- ============================================================
