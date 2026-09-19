@@ -1323,3 +1323,9 @@ body:has(.composer) .toasts { bottom: calc(76px + env(safe-area-inset-bottom, 0p
 @media (prefers-reduced-motion: reduce) {
   .stamp, .msg, .room-result, .fx-word { animation: none; }
 }
+
+/* Kitoblar ro'yxati: nom to'liq qatorda, tugma va holat pastda */
+.toc-row-book { flex-wrap: wrap; row-gap: 6px; }
+.toc-row-book .toc-name { flex: 1 1 100%; white-space: normal; }
+.toc-row-book .toc-leader { display: none; }
+.toc-row-book .text-link { margin-right: auto; }

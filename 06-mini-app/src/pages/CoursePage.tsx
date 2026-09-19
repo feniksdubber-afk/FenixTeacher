@@ -212,7 +212,7 @@ export function CoursePage() {
             return (
               <div
                 key={b.id}
-                className={`toc-row ${!bosiladi ? "is-disabled" : ""}`}
+                className={`toc-row toc-row-book ${!bosiladi ? "is-disabled" : ""}`}
               >
                 <button
                   type="button"
