@@ -151,6 +151,35 @@ export interface Chapter {
 
 export const listChapters = (bookId: string) => api.get<Chapter[]>(`/books/${bookId}/chapters`);
 
+// ---- To'liq PDF-viewer (book_pages) ----
+
+export interface BookPage {
+  page_physical: number;
+  width: number;
+  height: number;
+  url: string;
+}
+
+export interface BookPagesResponse {
+  sahifalar_soni: number | null;
+  sahifalar: BookPage[];
+}
+
+export interface BookPagesStatus {
+  holati: "yoq" | "jarayonda" | "tayyor" | "xato";
+  sahifalar_soni: number | null;
+  tayyor_soni: number;
+}
+
+export const startBookPagesRender = (bookId: string) =>
+  api.post<{ book_id: string; holati: string }>(`/books/${bookId}/pages/render`, {});
+
+export const getBookPagesStatus = (bookId: string) =>
+  api.get<BookPagesStatus>(`/books/${bookId}/pages/status`);
+
+export const getBookPages = (bookId: string, from: number, to: number) =>
+  api.get<BookPagesResponse>(`/books/${bookId}/pages?from=${from}&to=${to}`);
+
 export type ExerciseTuri =
   | "tanlov"
   | "boshliq_toldirish"
@@ -167,6 +196,8 @@ export interface NewExercise {
   mavzu: string;
   interleaved?: boolean;
   manba?: "ai" | "kitob"; // "kitob" — darslikdan olingan haqiqiy mashq
+  kitob_raqami?: string;  // masalan "1a" — faqat manba="kitob"
+  rasm_url?: string;      // darslik sahifasining shu mashqqa tegishli bo'lagi (faqat manba="kitob")
 }
 
 export const generateExercise = (chapterId: string, turi?: ExerciseTuri) =>
