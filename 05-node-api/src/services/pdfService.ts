@@ -37,6 +37,30 @@ export async function startPdfProcessing(
   return res.json() as Promise<ProcessResult>;
 }
 
+export interface ChapterRef {
+  tartib_raqami: number;
+  sahifa_boshi: number;
+  sahifa_oxiri: number | null;
+}
+
+/** Mashq extractor'ini ishga tushiradi (`/process`dan mustaqil job).
+ * Natija: waitForPdfJob(job_id) -> `natija.mashqlar`. */
+export async function startExerciseExtraction(
+  bookId: string,
+  fileUrl: string,
+  chapters: ChapterRef[]
+): Promise<ProcessResult> {
+  const res = await fetch(`${PDF_SERVICE_URL}/extract-exercises`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...internalHeaders() },
+    body: JSON.stringify({ book_id: bookId, file_url: fileUrl, chapters }),
+  });
+  if (!res.ok) {
+    throw new Error(`PDF-service /extract-exercises xatosi: ${res.status}`);
+  }
+  return res.json() as Promise<ProcessResult>;
+}
+
 export async function getPdfJobStatus(jobId: string): Promise<Record<string, unknown>> {
   const res = await fetch(`${PDF_SERVICE_URL}/status/${jobId}`, { headers: internalHeaders() });
   if (!res.ok) {
