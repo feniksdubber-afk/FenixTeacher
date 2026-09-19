@@ -4,14 +4,17 @@ import { useToast } from "../context/ToastContext";
 import { SpineBar } from "../components/Progress";
 import { QuestionSkeleton } from "../components/Skeleton";
 import {
-  generateExercise,
   submitAnswer,
   discussExercise,
   playTts,
+  startLesson,
+  nextLessonExercise,
+  finishLesson,
   NewExercise,
   AnswerResult,
   DiscussionMessage,
   ExerciseTuri,
+  LessonFinish,
 } from "../api/fenix";
 
 function boldify(text: string) {
@@ -108,12 +111,23 @@ export function ExercisePage() {
   const [natija, setNatija] = useState<AnswerResult | null>(null);
   const [suhbat, setSuhbat] = useState<Msg[]>([]);
   const [negaXabari, setNegaXabari] = useState("");
-  const [holat, setHolat] = useState<"boshlanmagan" | "yuklanmoqda" | "javob_kutilmoqda" | "baholandi">(
-    "boshlanmagan"
-  );
+  const [holat, setHolat] = useState<
+    | "boshlanmagan"
+    | "yuklanmoqda"
+    | "intro"
+    | "qayta_tushuntirish"
+    | "javob_kutilmoqda"
+    | "baholandi"
+    | "yakun"
+  >("boshlanmagan");
   const [yuborilmoqda, setYuborilmoqda] = useState(false); // javob baholanmoqda
   const [oylayapti, setOylayapti] = useState(false); // Fenix "Nega?"ga javob yozmoqda
   const [raqam, setRaqam] = useState(0); // shu seansdagi mashq tartibi
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [darsMatni, setDarsMatni] = useState(""); // isinish/tushuntirish yoki qayta-tushuntirish matni
+  const [yakunTakliflanadi, setYakunTakliflanadi] = useState(false);
+  const [yakunNatija, setYakunNatija] = useState<LessonFinish | null>(null);
+  const [yakunlanmoqda, setYakunlanmoqda] = useState(false);
 
   const suhbatOxiriRef = useRef<HTMLDivElement>(null);
   const foydalanuvchiYozdiRef = useRef(false);
@@ -134,8 +148,33 @@ export function ExercisePage() {
     suhbatOxiriRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [suhbat.length, oylayapti]);
 
-  async function yangiMashq() {
+  /** Darsni boshlaydi: sessiya ochadi (yoki davom ettiradi), isinish
+   * + mini-tushuntirish matnini ko'rsatadi (mashqdan OLDIN). */
+  async function darsniBoshla() {
     if (!chapterId) return;
+    setHolat("yuklanmoqda");
+    try {
+      const res = await startLesson(chapterId);
+      setSessionId(res.session_id);
+      setRaqam(res.mashqlar_soni);
+      if (res.tushuntirish_matni) {
+        setDarsMatni(res.tushuntirish_matni);
+        setHolat("intro");
+      } else {
+        await keyingiMashq(res.session_id);
+      }
+    } catch (e) {
+      toast.xato(e instanceof Error ? e.message : String(e));
+      setHolat("boshlanmagan");
+    }
+  }
+
+  /** Navbatdagi mashqni so'raydi — kitobdan (haqiqiy) yoki AI'dan;
+   * agar bir xil mavzuda ketma-ket 2 xato bo'lsa, o'rniga to'xtash-va-
+   * tushuntirish kartasi keladi. */
+  async function keyingiMashq(sid?: string) {
+    const activeSession = sid ?? sessionId;
+    if (!activeSession) return;
     setNatija(null);
     setSuhbat([]);
     setJavob("");
@@ -143,13 +182,33 @@ export function ExercisePage() {
     foydalanuvchiYozdiRef.current = false;
     setHolat("yuklanmoqda");
     try {
-      const yangi = await generateExercise(chapterId);
-      setExercise(yangi);
-      setRaqam((n) => n + 1);
+      const res = await nextLessonExercise(activeSession);
+      if (res.tur === "qayta_tushuntirish") {
+        setDarsMatni(res.matn);
+        setHolat("qayta_tushuntirish");
+        return;
+      }
+      setExercise(res.exercise);
+      setRaqam(res.mashqlar_soni);
+      setYakunTakliflanadi(res.yakunlashni_taklif_qil);
       setHolat("javob_kutilmoqda");
     } catch (e) {
       toast.xato(e instanceof Error ? e.message : String(e));
-      setHolat("boshlanmagan");
+      setHolat("baholandi"); // avvalgi ekranga qaytarish o'rniga xavfsizroq holat
+    }
+  }
+
+  async function darsniYakunla() {
+    if (!sessionId || yakunlanmoqda) return;
+    setYakunlanmoqda(true);
+    try {
+      const res = await finishLesson(sessionId);
+      setYakunNatija(res);
+      setHolat("yakun");
+    } catch (e) {
+      toast.xato(e instanceof Error ? e.message : String(e));
+    } finally {
+      setYakunlanmoqda(false);
     }
   }
 
@@ -212,15 +271,63 @@ export function ExercisePage() {
       {holat === "boshlanmagan" && (
         <div className="center-note">
           <p className="empty" style={{ margin: "0 auto 20px" }}>
-            Fenix bob matnidan savol tayyorlaydi. Boshlashga tayyor bo'lganingizda bosing.
+            Fenix darsni isinish va qisqa tushuntirishdan boshlaydi, keyin darslikning haqiqiy
+            mashqlarini birma-bir beradi. Boshlashga tayyor bo'lganingizda bosing.
           </p>
-          <button onClick={yangiMashq} className="btn" style={{ maxWidth: 220, margin: "0 auto" }}>
-            Mashqni boshlash
+          <button onClick={darsniBoshla} className="btn" style={{ maxWidth: 220, margin: "0 auto" }}>
+            Darsni boshlash
           </button>
         </div>
       )}
 
       {holat === "yuklanmoqda" && <QuestionSkeleton />}
+
+      {holat === "intro" && (
+        <div className="room-result">
+          <div className="fenix-note">
+            <FlameDot />
+            <p className="fenix-note-text" dangerouslySetInnerHTML={boldify(darsMatni)} />
+          </div>
+          <button onClick={() => keyingiMashq()} className="btn" style={{ marginTop: 22, maxWidth: 220 }}>
+            Mashqni boshlash
+          </button>
+        </div>
+      )}
+
+      {holat === "qayta_tushuntirish" && (
+        <div className="room-result">
+          <div className="verdict">
+            <span className="stamp result-qisman" aria-hidden="true">
+              <FlameDot />
+            </span>
+            <p className="result-line result-qisman">Keling, buni birga qayta ko'raylik.</p>
+          </div>
+          <div className="fenix-note">
+            <FlameDot />
+            <p className="fenix-note-text" dangerouslySetInnerHTML={boldify(darsMatni)} />
+          </div>
+          <button onClick={() => keyingiMashq()} className="btn" style={{ marginTop: 22, maxWidth: 220 }}>
+            Davom etish
+          </button>
+        </div>
+      )}
+
+      {holat === "yakun" && yakunNatija && (
+        <div className="room-result">
+          <div className="fenix-note">
+            <FlameDot />
+            <p className="fenix-note-text" dangerouslySetInnerHTML={boldify(yakunNatija.xulosa_matni)} />
+          </div>
+          <p className="sub" style={{ marginTop: 10 }}>
+            {yakunNatija.togri_soni}/{yakunNatija.mashqlar_soni} mashq to'g'ri bajarildi.
+          </p>
+          <div className="link-row" style={{ marginTop: 22, justifyContent: "center" }}>
+            <button onClick={() => navigate(-1)} className="btn" style={{ maxWidth: 220 }}>
+              Boblar ro'yxatiga
+            </button>
+          </div>
+        </div>
+      )}
 
       {exercise && (holat === "javob_kutilmoqda" || holat === "baholandi") && (
         <div>
@@ -228,6 +335,7 @@ export function ExercisePage() {
             <span className="room-tag">{TURI_NOMI[exercise.turi] ?? exercise.turi}</span>
             <span className="room-topic">
               {exercise.mavzu}
+              {exercise.manba === "kitob" && <span className="tag-repeat"> · kitobdan</span>}
               {exercise.interleaved && <span className="tag-repeat"> · takrorlash</span>}
             </span>
             <span className="room-count">{raqam}-mashq</span>
@@ -421,9 +529,19 @@ export function ExercisePage() {
                 </div>
               </section>
 
-              <button onClick={yangiMashq} className="btn" style={{ marginTop: 30 }}>
+              <button onClick={() => keyingiMashq()} className="btn" style={{ marginTop: 30 }}>
                 Keyingi mashq
               </button>
+              {yakunTakliflanadi && (
+                <button
+                  onClick={darsniYakunla}
+                  disabled={yakunlanmoqda}
+                  className="btn"
+                  style={{ marginTop: 12, opacity: 0.85 }}
+                >
+                  {yakunlanmoqda ? "Yakunlanmoqda..." : "Darsni shu yerda yakunlash"}
+                </button>
+              )}
               <div className="link-row" style={{ marginTop: 14, justifyContent: "center" }}>
                 <button onClick={() => navigate(-1)} className="text-link">
                   boblar ro'yxatiga
