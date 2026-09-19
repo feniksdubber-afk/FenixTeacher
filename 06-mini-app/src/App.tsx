@@ -9,6 +9,7 @@ import { WeeklyReportPage } from "./pages/WeeklyReportPage";
 import { syncUser, FenixUser } from "./api/fenix";
 import { UserContext } from "./context/UserContext";
 import { ToastProvider } from "./context/ToastContext";
+import { TelegramBackButton } from "./components/TelegramBackButton";
 
 function FlameMark() {
   return (
@@ -80,6 +81,7 @@ export function App() {
       <ToastProvider>
       <OpeningCurtain done={pardaKetdi} />
       <BrowserRouter>
+        <TelegramBackButton />
         <div className="topbar">
           <FlameMark />
           <span className="wordmark">
