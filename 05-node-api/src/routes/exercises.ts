@@ -29,6 +29,7 @@ import { query } from "../db/pool.js";
 import { callClaude } from "../services/claude.js";
 import { buildLearnerContext, renderLearnerContext, pickInterleavedCandidate } from "../services/contextBuilder.js";
 import { recordExerciseOutcome } from "../services/learnerProfile.js";
+import { createDownloadUrl } from "../services/r2.js";
 
 export const exercisesRouter = Router();
 exercisesRouter.use(telegramAuth);
@@ -120,6 +121,8 @@ interface GeneratedExercise {
   mavzu: string;
   interleaved: boolean;
   manba: "ai" | "kitob";
+  kitob_raqami?: string;   // masalan "1a" — darslikdagi haqiqiy mashq raqami (faqat manba="kitob")
+  rasm_url?: string;       // vaqtinchalik R2 GET URL (faqat manba="kitob" va rasm mavjud bo'lsa)
 }
 
 /** AI'ning o'zi mashq tuzadigan asosiy yo'l (interleaving bilan). */
@@ -249,6 +252,7 @@ interface BookExerciseRow {
   exercise_number: string;
   xom_matn: string;
   page_physical: number;
+  image_r2_key: string | null;
 }
 
 /** Bobning hali "boshlanmagan" (exercises'ga ko'chirilmagan), inson
@@ -256,7 +260,7 @@ interface BookExerciseRow {
  * mashqini oladi — sahifa/tartib bo'yicha. Topilmasa null. */
 async function getNextUnusedBookExercise(chapterId: string): Promise<BookExerciseRow | null> {
   const [row] = await query<BookExerciseRow>(
-    `SELECT be.id, be.exercise_number, be.xom_matn, be.page_physical
+    `SELECT be.id, be.exercise_number, be.xom_matn, be.page_physical, be.image_r2_key
      FROM book_exercises be
      LEFT JOIN exercises e ON e.book_exercise_id = be.id
      WHERE be.chapter_id = $1 AND be.needs_review = false AND e.id IS NULL
@@ -337,7 +341,26 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
     ]
   );
 
-  return { id: exercise.id, turi, savol: parsed.savol, mavzu: parsed.mavzu, interleaved: false, manba: "kitob" };
+  let rasm_url: string | undefined;
+  if (bookExercise.image_r2_key) {
+    try {
+      rasm_url = await createDownloadUrl(bookExercise.image_r2_key, { expiresInSec: 60 * 60 });
+    } catch (err) {
+      // Rasm URL'ini generatsiya qilib bo'lmasa ham mashqning o'zi ishlashda davom etadi
+      console.error(`[exercises] mashq rasmi uchun URL yaratib bo'lmadi (book_exercise=${bookExercise.id}):`, err);
+    }
+  }
+
+  return {
+    id: exercise.id,
+    turi,
+    savol: parsed.savol,
+    mavzu: parsed.mavzu,
+    interleaved: false,
+    manba: "kitob",
+    kitob_raqami: bookExercise.exercise_number,
+    rasm_url,
+  };
 }
 
 /** Navbatdagi mashqni tanlaydi: avval bobning ishlatilmagan haqiqiy

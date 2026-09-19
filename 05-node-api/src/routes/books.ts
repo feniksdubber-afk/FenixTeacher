@@ -8,8 +8,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { telegramAuth } from "../middleware/telegramAuth.js";
 import { pool, query } from "../db/pool.js";
-import { startExerciseExtraction, startPdfProcessing, waitForPdfJob } from "../services/pdfService.js";
-import { createDownloadUrl } from "../services/r2.js";
+import { startExerciseExtraction, startPageRendering, startPdfProcessing, waitForPdfJob } from "../services/pdfService.js";
+import { createDownloadUrl, uploadBuffer } from "../services/r2.js";
 
 export const booksRouter = Router();
 booksRouter.use(telegramAuth);
@@ -224,17 +224,46 @@ interface ExtractedExercise {
   needs_review: boolean;
   needs_review_reason: string | null;
   chapter_tartib_raqami: number | null;
+  rasm_base64: string | null;
 }
 
 /** Kitobning mashqlarini BIR tranzaksiyada almashtiradi (DELETE + INSERT):
  * qayta-extraction idempotent bo'ladi, oraliq holat ko'rinmaydi.
  * `xom_matn` extractor bergan holda yoziladi — bu yerda o'zgartirilmaydi. */
+/** PDF-service qaytargan base64 JPEG'larni R2'ga yuklaydi (bir vaqtda
+ * cheklangan sonda — bitta kitobda yuzlab mashq bo'lishi mumkin, hammasini
+ * bir zumda parallel yuborish R2/xotirani ortiqcha band qiladi). Xato
+ * bo'lgan alohida rasm o'sha mashqni rasmsiz qoldiradi, butun jarayonni
+ * to'xtatmaydi. Qaytadi: mashq index -> image_r2_key xaritasi. */
+async function uploadExerciseImages(mashqlar: ExtractedExercise[]): Promise<Map<number, string>> {
+  const natija = new Map<number, string>();
+  const BATCH = 5;
+  for (let i = 0; i < mashqlar.length; i += BATCH) {
+    const chunk = mashqlar.slice(i, i + BATCH);
+    await Promise.all(
+      chunk.map(async (m, j) => {
+        if (!m.rasm_base64) return;
+        try {
+          const key = await uploadBuffer(Buffer.from(m.rasm_base64, "base64"), "image/jpeg", {
+            prefix: "mashq-rasmlari/",
+          });
+          natija.set(i + j, key);
+        } catch (err) {
+          console.error(`[books] mashq rasmini yuklashda xato (sahifa ${m.page_physical}):`, err);
+        }
+      })
+    );
+  }
+  return natija;
+}
+
 async function replaceBookExercises(bookId: string, mashqlar: ExtractedExercise[]): Promise<number> {
   const chapterRows = await query<{ id: string; tartib_raqami: number }>(
     `SELECT id, tartib_raqami FROM chapters WHERE book_id=$1`,
     [bookId]
   );
   const chapterIdByOrder = new Map(chapterRows.map((r) => [r.tartib_raqami, r.id]));
+  const imageKeys = await uploadExerciseImages(mashqlar);
 
   const client = await pool.connect();
   try {
@@ -254,7 +283,8 @@ async function replaceBookExercises(bookId: string, mashqlar: ExtractedExercise[
       tasdiqlangan.rows.map((r: any) => [tasdiqKaliti(r.page_physical, r.exercise_number, r.xom_matn), r.tekshirilgan_at])
     );
     await client.query(`DELETE FROM book_exercises WHERE book_id=$1`, [bookId]);
-    for (const m of mashqlar) {
+    for (let idx = 0; idx < mashqlar.length; idx++) {
+      const m = mashqlar[idx];
       const kalit = tasdiqKaliti(m.page_physical, m.exercise_number, m.xom_matn);
       const oldingiTasdiq = tasdiqMap.has(kalit);
       await client.query(
@@ -262,8 +292,8 @@ async function replaceBookExercises(bookId: string, mashqlar: ExtractedExercise[
            (book_id, chapter_id, exercise_number, heading_kind, xom_matn,
             page_physical, page_printed, bbox, reading_order_position,
             audio_markers, page_type, needs_review, needs_review_reason,
-            tekshirilgan, tekshirilgan_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15)`,
+            tekshirilgan, tekshirilgan_at, image_r2_key)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16)`,
         [
           bookId,
           m.chapter_tartib_raqami != null ? chapterIdByOrder.get(m.chapter_tartib_raqami) ?? null : null,
@@ -280,6 +310,7 @@ async function replaceBookExercises(bookId: string, mashqlar: ExtractedExercise[
           m.needs_review_reason,
           oldingiTasdiq,
           oldingiTasdiq ? tasdiqMap.get(kalit) ?? null : null,
+          imageKeys.get(idx) ?? null,
         ]
       );
     }
@@ -408,4 +439,154 @@ booksRouter.get("/:id/exercises", async (req, res) => {
     qaytarildi: mashqlar.length,
     mashqlar,
   });
+});
+
+// ============================================================
+// book_pages — to'liq PDF-viewer (v14). book_exercises'dan MUSTAQIL:
+// bu yerda kitobning HAR bir sahifasi to'liq JPEG sifatida.
+// ============================================================
+
+interface RenderedPage {
+  page_physical: number;
+  width: number;
+  height: number;
+  jpeg_base64: string;
+}
+
+/** Render qilingan sahifalarni R2'ga yuklaydi va book_pages'ga yozadi
+ * (upsert — qayta-render eski yozuvni yangilaydi, DELETE shart emas).
+ * Cheklangan parallellikda (bitta kitobda 100-200+ sahifa bo'lishi
+ * mumkin) — R2/xotirani bosib qolmaslik uchun. */
+async function storeRenderedPages(bookId: string, sahifalar: RenderedPage[]): Promise<number> {
+  const BATCH = 4;
+  let yozildi = 0;
+  for (let i = 0; i < sahifalar.length; i += BATCH) {
+    const chunk = sahifalar.slice(i, i + BATCH);
+    await Promise.all(
+      chunk.map(async (p) => {
+        try {
+          const key = await uploadBuffer(Buffer.from(p.jpeg_base64, "base64"), "image/jpeg", {
+            prefix: "kitob-sahifalari/",
+          });
+          await query(
+            `INSERT INTO book_pages (book_id, page_physical, image_r2_key, width_px, height_px)
+             VALUES ($1,$2,$3,$4,$5)
+             ON CONFLICT (book_id, page_physical)
+             DO UPDATE SET image_r2_key=$3, width_px=$4, height_px=$5`,
+            [bookId, p.page_physical, key, p.width, p.height]
+          );
+          yozildi++;
+        } catch (err) {
+          console.error(`[books] sahifa ${p.page_physical}ni saqlashda xato (book_id=${bookId}):`, err);
+        }
+      })
+    );
+  }
+  return yozildi;
+}
+
+/** Kitobning barcha sahifasini render qilishni boshlaydi. Idempotent —
+ * qayta chaqirilsa eski sahifalarni yangilaydi (o'chirmaydi), shuning
+ * uchun jarayon davomida ham eski rasm ko'rsatilib turaveradi. */
+booksRouter.post("/:id/pages/render", async (req, res) => {
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const book = await getOwnedBook(req.params.id, userId);
+  if (!book) return res.status(404).json({ xato: "kitob topilmadi" });
+  if (book.qayta_ishlash_holati !== "tayyor") {
+    return res.status(409).json({ xato: "kitob hali qayta ishlanmagan (holati 'tayyor' emas)" });
+  }
+  if (book.sahifalar_render_holati === "jarayonda") {
+    return res.status(202).json({ book_id: book.id, holati: "jarayonda", xabar: "allaqachon jarayonda" });
+  }
+
+  let job_id: string;
+  try {
+    const file_url = await createDownloadUrl(String(book.fayl_yoli), { expiresInSec: 30 * 60 });
+    ({ job_id } = await startPageRendering(file_url, book.id));
+  } catch (err) {
+    const tafsilot = err instanceof Error ? err.message : String(err);
+    return res.status(502).json({ xato: "PDF-service'ni ishga tushirib bo'lmadi", tafsilot });
+  }
+
+  await query(`UPDATE books SET sahifalar_render_holati='jarayonda' WHERE id=$1`, [book.id]);
+  res.status(202).json({ book_id: book.id, job_id, holati: "jarayonda" });
+
+  void (async () => {
+    try {
+      // Kitob to'liq render qilinishi (150-200 sahifa, base64 JPEG) uzoq
+      // vaqt olishi mumkin — timeout ataylab keng qilingan.
+      const natija = await waitForPdfJob(job_id, { intervalMs: 3000, timeoutMs: 30 * 60 * 1000 });
+      if (natija.holati !== "tayyor") {
+        console.error(`[books] sahifa-render xatosi (book_id=${book.id}):`, natija.xato_matni);
+        await query(`UPDATE books SET sahifalar_render_holati='xato' WHERE id=$1`, [book.id]);
+        return;
+      }
+      const sahifalar = ((natija.natija as any)?.sahifalar ?? []) as RenderedPage[];
+      const soni = await storeRenderedPages(book.id, sahifalar);
+      await query(
+        `UPDATE books SET sahifalar_render_holati='tayyor', sahifalar_soni=$2 WHERE id=$1`,
+        [book.id, (natija.natija as any)?.sahifalar_soni ?? soni]
+      );
+      console.log(`[books] book_pages yozildi: ${soni} ta (book_id=${book.id})`);
+    } catch (err) {
+      console.error(`[books] sahifalarni render qilishda xato (book_id=${book.id}):`, err);
+      await query(`UPDATE books SET sahifalar_render_holati='xato' WHERE id=$1`, [book.id]).catch(() => {});
+    }
+  })();
+});
+
+/** Renderlash holati — Mini App shu bilan pollab, progress-bar ko'rsatadi. */
+booksRouter.get("/:id/pages/status", async (req, res) => {
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const book = await getOwnedBook(req.params.id, userId);
+  if (!book) return res.status(404).json({ xato: "kitob topilmadi" });
+
+  const [{ tayyor_soni }] = await query<{ tayyor_soni: number }>(
+    `SELECT count(*)::int AS tayyor_soni FROM book_pages WHERE book_id=$1`,
+    [book.id]
+  );
+
+  res.json({
+    holati: book.sahifalar_render_holati,
+    sahifalar_soni: book.sahifalar_soni,
+    tayyor_soni,
+  });
+});
+
+/** Sahifalar ro'yxati — lazy-load uchun oraliq bilan (`from`/`to`). Bitta
+ * so'rovda ko'p sahifa (masalan butun kitob) so'ralishini oldini olish
+ * uchun oraliq 30 sahifagacha cheklangan — Mini App faqat ko'rinayotgan/
+ * yaqin sahifalarni so'raydi. URL'lar 2 soatga amal qiladi. */
+const MAX_PAGE_RANGE = 30;
+booksRouter.get("/:id/pages", async (req, res) => {
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const book = await getOwnedBook(req.params.id, userId);
+  if (!book) return res.status(404).json({ xato: "kitob topilmadi" });
+
+  const from = Math.max(1, Number(req.query.from ?? 1));
+  const to = Math.min(from + MAX_PAGE_RANGE - 1, Number(req.query.to ?? from + MAX_PAGE_RANGE - 1));
+
+  const rows = await query<{ page_physical: number; image_r2_key: string; width_px: number; height_px: number }>(
+    `SELECT page_physical, image_r2_key, width_px, height_px
+     FROM book_pages WHERE book_id=$1 AND page_physical BETWEEN $2 AND $3
+     ORDER BY page_physical`,
+    [book.id, from, to]
+  );
+
+  const sahifalar = await Promise.all(
+    rows.map(async (r) => ({
+      page_physical: r.page_physical,
+      width: r.width_px,
+      height: r.height_px,
+      url: await createDownloadUrl(r.image_r2_key, { expiresInSec: 2 * 60 * 60 }),
+    }))
+  );
+
+  res.json({ sahifalar_soni: book.sahifalar_soni, sahifalar });
 });
