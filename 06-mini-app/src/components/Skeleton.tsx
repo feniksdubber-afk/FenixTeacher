@@ -124,3 +124,19 @@ export function ReportSkeleton() {
     </div>
   );
 }
+
+/** Mashq xonasi: savol tayyorlanayotganda — savol + javob daftari shaklida. */
+export function QuestionSkeleton() {
+  return (
+    <div role="status" aria-busy="true" aria-label="Fenix savol tayyorlamoqda">
+      <div aria-hidden="true">
+        <Skeleton w={170} h={11} style={{ marginBottom: 18 }} />
+        <Skeleton h={20} style={{ marginBottom: 10 }} />
+        <Skeleton h={20} w="88%" style={{ marginBottom: 10 }} />
+        <Skeleton h={20} w="58%" style={{ marginBottom: 28 }} />
+        <div className="skel-ruled" />
+      </div>
+      <p className="sub" style={{ marginTop: 16 }}>Fenix savol tayyorlamoqda...</p>
+    </div>
+  );
+}
