@@ -69,6 +69,30 @@ export async function getPdfJobStatus(jobId: string): Promise<Record<string, unk
   return res.json() as Promise<Record<string, unknown>>;
 }
 
+/** To'liq PDF-viewer uchun: kitobning barcha sahifasini render qilishni
+ * boshlaydi (`/extract-exercises` kabi mustaqil job). Natija:
+ * waitForPdfJob(job_id) -> `natija.sahifalar`. */
+export async function startPageRendering(
+  fileUrl: string,
+  bookId: string,
+  opts: { dpi?: number; quality?: number } = {}
+): Promise<ProcessResult> {
+  const res = await fetch(`${PDF_SERVICE_URL}/render-pages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...internalHeaders() },
+    body: JSON.stringify({
+      book_id: bookId,
+      file_url: fileUrl,
+      dpi: opts.dpi ?? 110,
+      quality: opts.quality ?? 76,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`PDF-service /render-pages xatosi: ${res.status}`);
+  }
+  return res.json() as Promise<ProcessResult>;
+}
+
 /**
  * Kitob qayta ishlanishini pollab, tugaguncha kutadi (oddiy MVP yechim —
  * bitta foydalanuvchi uchun yetarli; kelajakda webhook'ga o'tish mumkin).

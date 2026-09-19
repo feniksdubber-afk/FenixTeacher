@@ -53,6 +53,26 @@ export async function createUploadUrl(
   return { file_key, upload_url };
 }
 
+/** Server tomonidan to'g'ridan-to'g'ri yuklash (presigned emas — Node'ning
+ * o'z credential'i bilan). PDF-service `rasm_base64` qaytargan mashq
+ * rasmlari shu orqali yoziladi: ular ko'p va kichik, presigned PUT URL
+ * so'rab-yuborib olish ortiqcha round-trip bo'lar edi. */
+export async function uploadBuffer(
+  buffer: Buffer,
+  contentType: string,
+  { prefix = "" }: { prefix?: string } = {}
+): Promise<string> {
+  const kengaytma = RUXSAT_ETILGAN_TURLAR[contentType];
+  if (!kengaytma) {
+    throw new Error(`ruxsat etilmagan fayl turi: ${contentType}`);
+  }
+  const file_key = `${prefix}${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${kengaytma}`;
+  await r2.send(
+    new PutObjectCommand({ Bucket: bucket, Key: file_key, Body: buffer, ContentType: contentType })
+  );
+  return file_key;
+}
+
 /** PDF-service kabi ichki iste'molchilar uchun: vaqtinchalik GET URL. */
 export async function createDownloadUrl(
   file_key: string,
