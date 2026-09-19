@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from fastapi import Depends, FastAPI, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel
 
+from app.services.exercise_extractor import extract_book_exercises
 from app.services.json_builder import build_book_json
 
 app = FastAPI(title="FenixTeacher PDF Service")
@@ -86,6 +87,36 @@ async def process_pdf(req: ProcessRequest, background_tasks: BackgroundTasks):
     return ProcessResponse(job_id=job_id, holati="jarayonda")
 
 
+class ChapterRef(BaseModel):
+    tartib_raqami: int
+    sahifa_boshi: int
+    sahifa_oxiri: int | None = None
+
+
+class ExtractExercisesRequest(BaseModel):
+    book_id: str
+    file_url: str                      # R2 presigned GET URL
+    chapters: list[ChapterRef] = []    # chapters jadvalidan (mashqni bobga bog'lash uchun)
+    sahifa_offseti: int | None = None  # None -> avtomatik aniqlanadi
+
+
+@app.post("/extract-exercises", response_model=ProcessResponse, dependencies=[Depends(verify_internal_secret)])
+async def extract_exercises_endpoint(req: ExtractExercisesRequest, background_tasks: BackgroundTasks):
+    """`/process`dan MUSTAQIL: chapters.matn pipeline'iga tegmaydi. Natija
+    /status/{job_id} orqali `natija.mashqlar` sifatida olinadi."""
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {
+        "holati": "jarayonda",
+        "book_id": req.book_id,
+        "boshlangan_at": datetime.now(timezone.utc).isoformat(),
+        "natija": None,
+    }
+    background_tasks.add_task(
+        _run_exercise_job, job_id, req.file_url, [c.model_dump() for c in req.chapters], req.sahifa_offseti
+    )
+    return ProcessResponse(job_id=job_id, holati="jarayonda")
+
+
 @app.get("/status/{job_id}", dependencies=[Depends(verify_internal_secret)])
 async def get_status(job_id: str):
     job = JOBS.get(job_id)
@@ -113,6 +144,24 @@ def _run_job(job_id: str, file_url: str, book_id: str):
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)  # shaxsiy nashr huquqi himoyalangan fayl diskda qolmasin
+
+
+def _run_exercise_job(job_id: str, file_url: str, chapters: list[dict], offset: int | None):
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        urllib.request.urlretrieve(file_url, tmp_path)
+
+        JOBS[job_id]["natija"] = extract_book_exercises(tmp_path, chapters, offset)
+        JOBS[job_id]["holati"] = "tayyor"
+        JOBS[job_id]["yakunlangan_at"] = datetime.now(timezone.utc).isoformat()
+    except Exception as e:
+        JOBS[job_id]["holati"] = "xato"
+        JOBS[job_id]["xato_matni"] = str(e)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 @app.get("/health")
