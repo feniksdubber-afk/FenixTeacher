@@ -3,7 +3,16 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useToast } from "../context/ToastContext";
 import { HeroSkeleton, TocSkeleton } from "../components/Skeleton";
 import { SpineBar, StageProgress } from "../components/Progress";
-import { getCourse, getBook, presignUpload, registerBook, uploadFileToR2, CourseDetail } from "../api/fenix";
+import {
+  getCourse,
+  getBook,
+  extractBookExercises,
+  getBookExercises,
+  presignUpload,
+  registerBook,
+  uploadFileToR2,
+  CourseDetail,
+} from "../api/fenix";
 
 function kitobBelgisi(holat: string) {
   if (holat === "tayyor") return { cls: "is-active", label: "tayyor" };
@@ -75,6 +84,40 @@ export function CoursePage() {
   useEffect(() => {
     yuklash().catch((e) => setXato(String(e.message)));
   }, [id]);
+
+  async function mashqlarniAjratish(bookId: string) {
+    try {
+      setHolat("Kitobdagi mashqlar ajratilmoqda...");
+      setBosqich({ tur: "tahlil", boshlandi: Date.now() });
+      setOtdi(0);
+
+      const natija = await extractBookExercises(bookId);
+
+      toast.tayyor("Mashqlarni ajratish boshlandi");
+
+
+      // PDF service fonda ishlaydi.
+      await kutish(10000);
+
+      const mashqlar = await getBookExercises(bookId);
+
+
+      if (mashqlar.jami > 0) {
+        setHolat(
+          `${mashqlar.jami} ta mashq topildi — ` +
+          `${mashqlar.needs_review_soni} ta tekshirish kerak`
+        );
+        setBosqich({ tur: "tayyor" });
+      } else {
+        setHolat("Extraction hali davom etmoqda. Keyinroq tekshiring.");
+        setBosqich({ tur: "tayyor" });
+      }
+    } catch (e) {
+      toast.xato(e instanceof Error ? e.message : String(e));
+      setHolat(null);
+      setBosqich(null);
+    }
+  }
 
   async function handleFileChosen(file: File) {
     if (!id) return;
@@ -167,20 +210,54 @@ export function CoursePage() {
             const s = kitobBelgisi(b.qayta_ishlash_holati);
             const bosiladi = b.qayta_ishlash_holati === "tayyor";
             return (
-              <button
+              <div
                 key={b.id}
-                onClick={() => bosiladi && navigate(`/books/${b.id}/chapters`)}
                 className={`toc-row ${!bosiladi ? "is-disabled" : ""}`}
               >
-                <span className="toc-name">{b.nomi}</span>
+                <button
+                  type="button"
+                  disabled={!bosiladi}
+                  onClick={() => navigate(`/books/${b.id}/chapters`)}
+                  className="toc-name"
+                  style={{
+                    border: "none",
+                    background: "none",
+                    padding: 0,
+                    margin: 0,
+                    font: "inherit",
+                    color: "inherit",
+                    cursor: bosiladi ? "pointer" : "default",
+                    textAlign: "left",
+                  }}
+                >
+                  {b.nomi}
+                </button>
+
                 <span className="toc-leader" />
+
+                {bosiladi && (
+                  <button
+                    type="button"
+                    onClick={() => mashqlarniAjratish(b.id)}
+                    className="text-link"
+                    style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+                  >
+                    mashqlarni ajratish
+                  </button>
+                )}
+
                 <span className={`toc-status ${s.cls}`}>
                   {b.qayta_ishlash_holati === "jarayonda" && (
-                    <SpineBar indeterminate ticks={6} size="xs" label="Tahlil davom etmoqda" />
+                    <SpineBar
+                      indeterminate
+                      ticks={6}
+                      size="xs"
+                      label="Tahlil davom etmoqda"
+                    />
                   )}
                   {s.label}
                 </span>
-              </button>
+              </div>
             );
           })}
         </div>

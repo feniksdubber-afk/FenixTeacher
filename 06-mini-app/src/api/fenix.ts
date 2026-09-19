@@ -59,6 +59,41 @@ export const registerBook = (data: {
 /** FIX (#8): kitob registratsiyasi endi darhol qaytadi (202,
  * holati='jarayonda') — qayta ishlash fonda davom etadi. Frontend
  * shu funksiya bilan holatni pollab, tayyor/xato bo'lguncha kutadi. */
+
+export interface BookExercise {
+  id: string;
+  chapter_id: string | null;
+  exercise_number: string;
+  heading_kind: "numeric" | "sub_inherited";
+  xom_matn: string;
+  page_physical: number;
+  page_printed: number | null;
+  bbox: number[] | null;
+  reading_order_position: number;
+  audio_markers: string[];
+  page_type: string | null;
+  needs_review: boolean;
+  needs_review_reason: string | null;
+  tekshirilgan: boolean;
+  tekshirilgan_at: string | null;
+}
+
+export interface BookExercisesResult {
+  jami: number;
+  needs_review_soni: number;
+  tekshirilgan_soni: number;
+  qaytarildi: number;
+  mashqlar: BookExercise[];
+}
+
+export const extractBookExercises = (bookId: string) =>
+  api.post<{ book_id: string; job_id: string; holati: string }>(
+    `/books/${bookId}/exercises/extract`
+  );
+
+export const getBookExercises = (bookId: string) =>
+  api.get<BookExercisesResult>(`/books/${bookId}/exercises`);
+
 export const getBook = (bookId: string) =>
   api.get<{ id: string; qayta_ishlash_holati: string; qayta_ishlash_xatosi: string | null }>(
     `/books/${bookId}`
