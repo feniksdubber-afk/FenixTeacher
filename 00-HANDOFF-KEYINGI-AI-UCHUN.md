@@ -261,6 +261,50 @@ bot faqat "eshik".
    bilan hali sinalmagan (faqat kod darajasida yozilgan, aylantirib
    ko'rilmagan).
 
+7bis-quart. **v11 (book_exercises↔exercises ko'prigi) + v12
+   (lesson_sessions — haqiqiy dars tuzilishi) YOZILDI:**
+   - `migrate-v11-book-exercise-link.sql` — `exercises.book_exercise_id`
+     (bitta kitob mashqi faqat bitta marta ishlatiladi, qisman unique
+     indeks). `fenix-db-schema.sql` ham yangi o'rnatmalar uchun yangilandi.
+   - `migrate-v12-lesson-sessions.sql` — `lesson_sessions` jadvali +
+     `exercises.lesson_session_id`/`dars_bosqichi`.
+   - `routes/exercises.ts` to'liq qayta yozildi:
+     - `pickNextExercisePayload()` — avval bobning ishlatilmagan
+       haqiqiy kitob mashqini (`book_exercises`, `needs_review=false`)
+       oladi, Claude orqali formatlab `exercises`ga kiritadi
+       (`startBookExercise`); tugagach `generateAiExercise()` AI
+       generatsiyasiga o'tadi. Ikkalasi ham bir xil `exercises`
+       yozuviga aylanadi — mavjud `/answer`/`/discuss` o'zgarmagan.
+     - `POST /chapters/:id/lesson/start` — faol sessiya bo'lsa
+       davom ettiradi, bo'lmasa yangisini ochadi: isinish (due
+       words soni + eng ko'p takrorlangan xato) + mini-tushuntirish
+       (mashqdan OLDIN, bitta Claude chaqiruvida birlashtirilgan).
+     - `POST /lesson/:sessionId/exercises/next` — navbatdagi mashq;
+       agar shu darsda bitta mavzuda ketma-ket 2 xato bo'lsa (va bu
+       mavzu hali qayta tushuntirilmagan bo'lsa) — o'rniga
+       to'xtash-va-tushuntirish kartasi (`tur:"qayta_tushuntirish"`)
+       qaytaradi.
+     - `POST /lesson/:sessionId/finish` — qisqa (Haiku) xulosa +
+       to'g'ri/jami mashqlar soni.
+     - `/answer`dagi `ketma_ket_notogri_soni` yangilash logikasi
+       saqlanib qoldi (bu qism oldingi sessiyada allaqachon yozilgan
+       edi).
+   - `06-mini-app/src/api/fenix.ts` — `startLesson`/`nextLessonExercise`/
+     `finishLesson` + tegishli tiplar qo'shildi.
+   - `06-mini-app/src/pages/ExercisePage.tsx` — to'liq dars oqimiga
+     o'tkazildi: "Darsni boshlash" → intro karta (isinish+tushuntirish)
+     → mashq(lar) → (kerak bo'lsa) to'xtash-va-tushuntirish kartasi →
+     "Darsni shu yerda yakunlash" (6 mashqdan keyin taklif qilinadi) →
+     yakun kartasi (xulosa + statistika). Kitobdan kelgan mashqlarda
+     "· kitobdan" belgisi ko'rinadi.
+   - **HALI SINALMAGAN** — real DATABASE_URL/ANTHROPIC_API_KEY bilan
+     end-to-end aylantirib ko'rilmagan (bu muhitda tarmoq/DB yo'q).
+     Birinchi ishga tushirishda: (1) v11 va v12 migratsiyalarini
+     ketma-ket ishga tushiring, (2) bitta bobda kamida bitta
+     `needs_review=false` `book_exercises` yozuvi borligini tekshiring
+     (aks holda hammasi AI generatsiyasiga tushadi — bu ham to'g'ri
+     ishlaydi, shunchaki "kitobdan" oqimi sinalmagan bo'ladi).
+
 7bis. **SM-2 so'z boyligi + user_progress ulandi** (bundan oldingi
    sessiyada "qilindi" deb yozilgan edi, lekin AI limiti tugab, kodga
    kirmay qolgan ekan — bu sessiyada tekshirilib, haqiqatda ulandi):
