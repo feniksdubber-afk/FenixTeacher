@@ -38,6 +38,7 @@ from pydantic import BaseModel
 
 from app.services.exercise_extractor import extract_book_exercises
 from app.services.json_builder import build_book_json
+from app.services.page_renderer import render_all_pages
 
 app = FastAPI(title="FenixTeacher PDF Service")
 
@@ -98,6 +99,7 @@ class ExtractExercisesRequest(BaseModel):
     file_url: str                      # R2 presigned GET URL
     chapters: list[ChapterRef] = []    # chapters jadvalidan (mashqni bobga bog'lash uchun)
     sahifa_offseti: int | None = None  # None -> avtomatik aniqlanadi
+    rasmlarni_render_qil: bool = True  # False -> faqat matn (eski xatti-harakat, tezroq)
 
 
 @app.post("/extract-exercises", response_model=ProcessResponse, dependencies=[Depends(verify_internal_secret)])
@@ -112,7 +114,12 @@ async def extract_exercises_endpoint(req: ExtractExercisesRequest, background_ta
         "natija": None,
     }
     background_tasks.add_task(
-        _run_exercise_job, job_id, req.file_url, [c.model_dump() for c in req.chapters], req.sahifa_offseti
+        _run_exercise_job,
+        job_id,
+        req.file_url,
+        [c.model_dump() for c in req.chapters],
+        req.sahifa_offseti,
+        req.rasmlarni_render_qil,
     )
     return ProcessResponse(job_id=job_id, holati="jarayonda")
 
@@ -123,6 +130,47 @@ async def get_status(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="job topilmadi")
     return job
+
+
+class RenderPagesRequest(BaseModel):
+    book_id: str
+    file_url: str            # R2 presigned GET URL
+    dpi: int = 110            # PDF-viewer uchun; mashq-kesmalari (150 DPI) bilan aralashtirilmasin
+    quality: int = 76
+
+
+@app.post("/render-pages", response_model=ProcessResponse, dependencies=[Depends(verify_internal_secret)])
+async def render_pages_endpoint(req: RenderPagesRequest, background_tasks: BackgroundTasks):
+    """To'liq PDF-viewer uchun: kitobning HAR bir sahifasini JPEG'ga
+    aylantiradi. `/extract-exercises`dan MUSTAQIL job (alohida chaqiriladi,
+    kitob birinchi marta yuklanganda yoki qayta render kerak bo'lganda)."""
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {
+        "holati": "jarayonda",
+        "book_id": req.book_id,
+        "boshlangan_at": datetime.now(timezone.utc).isoformat(),
+        "natija": None,
+    }
+    background_tasks.add_task(_run_render_pages_job, job_id, req.file_url, req.dpi, req.quality)
+    return ProcessResponse(job_id=job_id, holati="jarayonda")
+
+
+def _run_render_pages_job(job_id: str, file_url: str, dpi: int, quality: int):
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        urllib.request.urlretrieve(file_url, tmp_path)
+
+        JOBS[job_id]["natija"] = render_all_pages(tmp_path, dpi=dpi, quality=quality)
+        JOBS[job_id]["holati"] = "tayyor"
+        JOBS[job_id]["yakunlangan_at"] = datetime.now(timezone.utc).isoformat()
+    except Exception as e:
+        JOBS[job_id]["holati"] = "xato"
+        JOBS[job_id]["xato_matni"] = str(e)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 def _run_job(job_id: str, file_url: str, book_id: str):
@@ -146,14 +194,18 @@ def _run_job(job_id: str, file_url: str, book_id: str):
             os.remove(tmp_path)  # shaxsiy nashr huquqi himoyalangan fayl diskda qolmasin
 
 
-def _run_exercise_job(job_id: str, file_url: str, chapters: list[dict], offset: int | None):
+def _run_exercise_job(
+    job_id: str, file_url: str, chapters: list[dict], offset: int | None, render_images: bool = True
+):
     tmp_path = None
     try:
         fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
         os.close(fd)
         urllib.request.urlretrieve(file_url, tmp_path)
 
-        JOBS[job_id]["natija"] = extract_book_exercises(tmp_path, chapters, offset)
+        JOBS[job_id]["natija"] = extract_book_exercises(
+            tmp_path, chapters, offset, render_images=render_images
+        )
         JOBS[job_id]["holati"] = "tayyor"
         JOBS[job_id]["yakunlangan_at"] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
