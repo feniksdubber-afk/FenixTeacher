@@ -166,10 +166,52 @@ export interface NewExercise {
   savol: string;
   mavzu: string;
   interleaved?: boolean;
+  manba?: "ai" | "kitob"; // "kitob" — darslikdan olingan haqiqiy mashq
 }
 
 export const generateExercise = (chapterId: string, turi?: ExerciseTuri) =>
   api.post<NewExercise>(`/chapters/${chapterId}/exercises`, turi ? { turi } : {});
+
+// ---- Dars sessiyasi (lesson session) — isinish → tushuntirish →
+// amaliyot ⇄ qayta_tushuntirish → yakun ----
+
+export type LessonHolat = "isinish" | "tushuntirish" | "amaliyot" | "qayta_tushuntirish" | "yakunlandi";
+
+export interface LessonStart {
+  session_id: string;
+  holat: LessonHolat;
+  tushuntirish_matni: string | null;
+  mashqlar_soni: number;
+  davom_etilmoqda: boolean;
+}
+
+export const startLesson = (chapterId: string) =>
+  api.post<LessonStart>(`/chapters/${chapterId}/lesson/start`);
+
+export interface LessonNextMashq {
+  tur: "mashq";
+  exercise: NewExercise;
+  mashqlar_soni: number;
+  yakunlashni_taklif_qil: boolean;
+}
+export interface LessonNextQaytaTushuntirish {
+  tur: "qayta_tushuntirish";
+  mavzu: string;
+  matn: string;
+}
+export type LessonNext = LessonNextMashq | LessonNextQaytaTushuntirish;
+
+export const nextLessonExercise = (sessionId: string) =>
+  api.post<LessonNext>(`/lesson/${sessionId}/exercises/next`);
+
+export interface LessonFinish {
+  xulosa_matni: string;
+  mashqlar_soni: number;
+  togri_soni: number;
+  mavzular: string[];
+}
+
+export const finishLesson = (sessionId: string) => api.post<LessonFinish>(`/lesson/${sessionId}/finish`);
 
 export interface AnswerResult {
   natija: "togri" | "notogri" | "qisman";
