@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { CoursesPage } from "./pages/CoursesPage";
 import { CoursePage } from "./pages/CoursePage";
 import { ChaptersPage } from "./pages/ChaptersPage";
+import { BookViewerPage } from "./pages/BookViewerPage";
 import { ExercisePage } from "./pages/ExercisePage";
 import { VocabPage } from "./pages/VocabPage";
 import { WeeklyReportPage } from "./pages/WeeklyReportPage";
@@ -93,6 +94,7 @@ export function App() {
           <Route path="/" element={<CoursesPage />} />
           <Route path="/courses/:id" element={<CoursePage />} />
           <Route path="/books/:bookId/chapters" element={<ChaptersPage />} />
+          <Route path="/books/:bookId/viewer" element={<BookViewerPage />} />
           <Route path="/chapters/:chapterId/practice" element={<ExercisePage />} />
           <Route path="/courses/:courseId/vocab" element={<VocabPage />} />
           <Route path="/courses/:courseId/weekly-report" element={<WeeklyReportPage />} />
