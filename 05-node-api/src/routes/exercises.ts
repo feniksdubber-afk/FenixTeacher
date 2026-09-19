@@ -1,9 +1,22 @@
 /**
- * exercises.ts — Fenixning birinchi haqiqiy "brain loop"i:
+ * exercises.ts — Fenixning "brain loop"i.
  *
  *   user action → Claude (mashq generatsiya) → foydalanuvchi javobi →
  *   Claude (tekshirish) → error_bank + learner_profile yangilanadi →
  *   ("Nega?" so'ralsa) Claude (tushuntirish, suhbat tarixi bilan)
+ *
+ * v11: `book_exercises` (darslikdan ajratilgan haqiqiy mashqlar) endi
+ * shu oqimga ulangan — `book_exercise_id` orqali. Bob ichida navbat
+ * avval haqiqiy kitob mashqlarini beradi, ular tugagach AI o'zi
+ * generatsiya qiladi (`pickNextExercisePayload`).
+ *
+ * v12: `lesson_sessions` — haqiqiy dars tuzilishi (4 bosqich):
+ *   isinish → tushuntirish → amaliyot ⇄ qayta_tushuntirish → yakun.
+ *   `/chapters/:id/lesson/start` — sessiya ochadi + isinish/tushuntirish.
+ *   `/lesson/:sessionId/exercises/next` — navbatdagi mashq (yoki, agar
+ *   bir xil mavzuda ketma-ket 2 xato bo'lsa, to'xtash-va-tushuntirish
+ *   kartasi).
+ *   `/lesson/:sessionId/finish` — yakuniy xulosa.
  *
  * Har bir bosqich `contextBuilder`dan o'quvchi holatini oladi — shu
  * bilan Fenix bir xil xatoni cheksiz qayta ko'rsatib o'tirmaydi va
@@ -60,13 +73,14 @@ interface ExerciseRow {
   natija: string | null;
   javob_boshlanish_at: string | null;
   course_id: string;
+  lesson_session_id: string | null;
 }
 
 /** Mashqni + egasi kursini bitta so'rovda oladi, egalikni tekshirish uchun. */
 async function getOwnedExercise(exerciseId: string, userId: string): Promise<ExerciseRow | null> {
   const [row] = await query<ExerciseRow>(
     `SELECT e.id, e.user_id, e.chapter_id, e.turi, e.savol, e.togri_javob, e.mavzu,
-            e.natija, e.javob_boshlanish_at, c.id AS course_id
+            e.natija, e.javob_boshlanish_at, e.lesson_session_id, c.id AS course_id
      FROM exercises e
      LEFT JOIN chapters ch ON ch.id = e.chapter_id
      LEFT JOIN books b ON b.id = ch.book_id
@@ -83,7 +97,9 @@ function safeJsonParse(text: string): any {
 }
 
 // ============================================================
-// 1) Mashq generatsiya
+// 1) Mashq generatsiya — umumiy yadro (to'g'ridan-to'g'ri chaqiruv
+//    HAM, lesson-session ichidan chaqiruv HAM shu funksiyadan
+//    foydalanadi — kod ikki joyda takrorlanmasin).
 // ============================================================
 
 const TURLAR = [
@@ -95,41 +111,31 @@ const TURLAR = [
   "error_correction",
   "teach_back",
 ] as const;
+type ExerciseTuri = (typeof TURLAR)[number];
 
-const GenerateSchema = z.object({
-  turi: z.enum(TURLAR).optional(), // berilmasa Fenix o'zi tanlaydi
-});
+interface GeneratedExercise {
+  id: string;
+  turi: ExerciseTuri;
+  savol: string;
+  mavzu: string;
+  interleaved: boolean;
+  manba: "ai" | "kitob";
+}
 
-exercisesRouter.post("/chapters/:chapterId/exercises", async (req, res) => {
-  const parsed = GenerateSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ xato: parsed.error.flatten() });
-  }
-  const userId = await currentUserId(req.telegramUser!.id);
-  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
-
-  const chapter = await getOwnedChapter(req.params.chapterId, userId);
-  if (!chapter) return res.status(404).json({ xato: "bob topilmadi" });
+/** AI'ning o'zi mashq tuzadigan asosiy yo'l (interleaving bilan). */
+async function generateAiExercise(
+  chapter: ChapterRow,
+  userId: string,
+  turiIn: ExerciseTuri | undefined,
+  opts: { sessionId?: string | null; darsBosqichi?: string | null } = {}
+): Promise<GeneratedExercise> {
   if (!chapter.matn) {
-    return res.status(422).json({ xato: "bu bobda matn yo'q — PDF qayta ishlanishi tugallanmagan bo'lishi mumkin" });
+    throw Object.assign(new Error("bu bobda matn yo'q"), { status: 422 });
   }
-
   const ctx = await buildLearnerContext(userId, chapter.course_id);
-  const turi = parsed.data.turi ?? "boshliq_toldirish";
+  const turi = turiIn ?? "boshliq_toldirish";
 
-  // Interleaving (N): ~25% ehtimol bilan, agar mos nomzod topilsa,
-  // bu mashq YANGI bob mavzusi o'rniga ESKI, hali mustahkam
-  // bo'lmagan mavzu/so'zni takrorlashga bag'ishlanadi. Bob matni
-  // baribir kontekst sifatida beriladi (Claude misollarni o'sha
-  // tildan/darajadan tanlashi uchun), lekin savol eski mavzuga oid.
-  // FIX v8.1: chapter.nomi uzatiladi (avval null edi) — shu bilan
-  // pickInterleavedCandidate joriy bob mavzusini havzadan olib
-  // tashlaydi va haqiqiy "eski mavzu" tanlanadi.
-  const interleavedNomzod = await pickInterleavedCandidate(
-    userId,
-    chapter.course_id,
-    chapter.nomi ?? null
-  );
+  const interleavedNomzod = await pickInterleavedCandidate(userId, chapter.course_id, chapter.nomi ?? null);
   const interleavedBolsinmi = interleavedNomzod !== null && Math.random() < 0.25;
 
   const interleavingVazifasi = interleavedBolsinmi
@@ -179,69 +185,485 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
   ]
 }`;
 
-  try {
-    const text = await callClaude({
-      model: "claude-sonnet-4-6",
-      maqsad: "mashq_generatsiya",
-      prompt,
-      maxTokens: 800,
+  const text = await callClaude({
+    model: "claude-sonnet-4-6",
+    maqsad: "mashq_generatsiya",
+    prompt,
+    maxTokens: 800,
+    userId,
+  });
+  const parsedExercise = safeJsonParse(text) as {
+    mavzu: string;
+    savol: string;
+    togri_javob: string | null;
+    yangi_sozlar?: { soz: string; tarjima: string; soz_turi: string | null }[];
+  };
+
+  const [exercise] = await query<{ id: string }>(
+    `INSERT INTO exercises
+       (user_id, chapter_id, turi, savol, togri_javob, mavzu, javob_boshlanish_at,
+        interleaved_mi, lesson_session_id, dars_bosqichi)
+     VALUES ($1,$2,$3,$4,$5,$6, now(), $7,$8,$9)
+     RETURNING id`,
+    [
       userId,
-    });
-    const parsedExercise = safeJsonParse(text) as {
-      mavzu: string;
-      savol: string;
-      togri_javob: string | null;
-      yangi_sozlar?: { soz: string; tarjima: string; soz_turi: string | null }[];
-    };
-
-    const [exercise] = await query<{ id: string }>(
-      `INSERT INTO exercises (user_id, chapter_id, turi, savol, togri_javob, mavzu, javob_boshlanish_at, interleaved_mi)
-       VALUES ($1,$2,$3,$4,$5,$6, now(), $7)
-       RETURNING id`,
-      [
-        userId,
-        chapter.id,
-        turi,
-        parsedExercise.savol,
-        parsedExercise.togri_javob ?? null,
-        parsedExercise.mavzu,
-        interleavedBolsinmi,
-      ]
-    );
-
-    // Bob matnidan taklif qilingan yangi so'zlarni SM-2 navbatiga qo'shadi.
-    // Xato bo'lsa ham mashqning o'zi baribir yaratilgan bo'lishi kerak —
-    // shuning uchun bu qism alohida try/catch bilan izolyatsiya qilingan.
-    if (parsedExercise.yangi_sozlar?.length) {
-      try {
-        for (const s of parsedExercise.yangi_sozlar.slice(0, 3)) {
-          if (!s.soz || !s.tarjima) continue;
-          await query(
-            `INSERT INTO words (user_id, course_id, chapter_id, soz, tarjima, soz_turi)
-             VALUES ($1,$2,$3,$4,$5,$6)
-             ON CONFLICT (user_id, course_id, soz) DO NOTHING`,
-            [userId, chapter.course_id, chapter.id, s.soz, s.tarjima, s.soz_turi ?? null]
-          );
-        }
-      } catch (sozXato) {
-        console.error("[exercises] yangi so'zlarni saqlashda xato:", sozXato);
-      }
-    }
-
-    // togri_javob ataylab qaytarilmaydi — javobni tekshirishdan oldin ko'rinmasin
-    res.status(201).json({
-      id: exercise.id,
+      chapter.id,
       turi,
-      savol: parsedExercise.savol,
-      mavzu: parsedExercise.mavzu,
-      interleaved: interleavedBolsinmi,
-    });
-  } catch (err) {
-    res.status(502).json({
-      xato: "mashq generatsiya qilinmadi",
+      parsedExercise.savol,
+      parsedExercise.togri_javob ?? null,
+      parsedExercise.mavzu,
+      interleavedBolsinmi,
+      opts.sessionId ?? null,
+      opts.darsBosqichi ?? null,
+    ]
+  );
+
+  if (parsedExercise.yangi_sozlar?.length) {
+    try {
+      for (const s of parsedExercise.yangi_sozlar.slice(0, 3)) {
+        if (!s.soz || !s.tarjima) continue;
+        await query(
+          `INSERT INTO words (user_id, course_id, chapter_id, soz, tarjima, soz_turi)
+           VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (user_id, course_id, soz) DO NOTHING`,
+          [userId, chapter.course_id, chapter.id, s.soz, s.tarjima, s.soz_turi ?? null]
+        );
+      }
+    } catch (sozXato) {
+      console.error("[exercises] yangi so'zlarni saqlashda xato:", sozXato);
+    }
+  }
+
+  return {
+    id: exercise.id,
+    turi,
+    savol: parsedExercise.savol,
+    mavzu: parsedExercise.mavzu,
+    interleaved: interleavedBolsinmi,
+    manba: "ai",
+  };
+}
+
+interface BookExerciseRow {
+  id: string;
+  exercise_number: string;
+  xom_matn: string;
+  page_physical: number;
+}
+
+/** Bobning hali "boshlanmagan" (exercises'ga ko'chirilmagan), inson
+ * shubha bildirmagan (needs_review=false) navbatdagi haqiqiy kitob
+ * mashqini oladi — sahifa/tartib bo'yicha. Topilmasa null. */
+async function getNextUnusedBookExercise(chapterId: string): Promise<BookExerciseRow | null> {
+  const [row] = await query<BookExerciseRow>(
+    `SELECT be.id, be.exercise_number, be.xom_matn, be.page_physical
+     FROM book_exercises be
+     LEFT JOIN exercises e ON e.book_exercise_id = be.id
+     WHERE be.chapter_id = $1 AND be.needs_review = false AND e.id IS NULL
+     ORDER BY be.page_physical, be.reading_order_position
+     LIMIT 1`,
+    [chapterId]
+  );
+  return row ?? null;
+}
+
+/** Haqiqiy kitob mashqini (xom OCR matni) Claude yordamida formatlab,
+ * `exercises`ga bitta yozuv sifatida kiritadi — shu bilan mavjud
+ * javob-tekshirish/"Nega?" logikasi hech narsa o'zgarmasdan ishlaydi. */
+async function startBookExercise(
+  bookExercise: BookExerciseRow,
+  chapter: ChapterRow,
+  userId: string,
+  opts: { sessionId?: string | null; darsBosqichi?: string | null } = {}
+): Promise<GeneratedExercise> {
+  const ctx = await buildLearnerContext(userId, chapter.course_id);
+
+  const prompt = `${renderLearnerContext(ctx)}
+
+Bu — darslikning ${bookExercise.page_physical}-sahifasidan OCR orqali
+ajratib olingan HAQIQIY mashq (raqami: ${bookExercise.exercise_number}),
+xom matn quyidagicha (OCR chalkashligi bo'lishi mumkin):
+---
+${bookExercise.xom_matn.slice(0, 2000)}
+---
+
+VAZIFA: shu xom matnni o'quvchiga ko'rsatsa bo'ladigan tarzda
+formatla — OCR shovqinini tozala, agar mashq turi aniq bo'lsa
+(${TURLAR.join("/")}) shulardan eng mosini tanla (aniq bo'lmasa
+"boshliq_toldirish"), va iloji bo'lsa to'g'ri javobni chiqar. Mazmunni
+O'ZGARTIRMA — faqat original mashqni tushunarli ko'rinishga kelting.
+
+Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
+{
+  "turi": "<${TURLAR.join("|")}>",
+  "mavzu": "<qisqa grammatik/leksik mavzu nomi>",
+  "savol": "<o'quvchiga ko'rsatiladigan, tozalangan savol/topshiriq matni>",
+  "togri_javob": "<aniqlash mumkin bo'lsa to'g'ri javob, bo'lmasa null>"
+}`;
+
+  const text = await callClaude({
+    model: "claude-sonnet-4-6",
+    maqsad: "kitob_mashqini_formatlash",
+    prompt,
+    maxTokens: 700,
+    userId,
+  });
+  const parsed = safeJsonParse(text) as {
+    turi: string;
+    mavzu: string;
+    savol: string;
+    togri_javob: string | null;
+  };
+  const turi: ExerciseTuri = (TURLAR as readonly string[]).includes(parsed.turi)
+    ? (parsed.turi as ExerciseTuri)
+    : "boshliq_toldirish";
+
+  const [exercise] = await query<{ id: string }>(
+    `INSERT INTO exercises
+       (user_id, chapter_id, turi, savol, togri_javob, mavzu, javob_boshlanish_at,
+        book_exercise_id, lesson_session_id, dars_bosqichi)
+     VALUES ($1,$2,$3,$4,$5,$6, now(), $7,$8,$9)
+     RETURNING id`,
+    [
+      userId,
+      chapter.id,
+      turi,
+      parsed.savol,
+      parsed.togri_javob ?? null,
+      parsed.mavzu,
+      bookExercise.id,
+      opts.sessionId ?? null,
+      opts.darsBosqichi ?? null,
+    ]
+  );
+
+  return { id: exercise.id, turi, savol: parsed.savol, mavzu: parsed.mavzu, interleaved: false, manba: "kitob" };
+}
+
+/** Navbatdagi mashqni tanlaydi: avval bobning ishlatilmagan haqiqiy
+ * kitob mashqi, topilmasa AI generatsiyasi. */
+async function pickNextExercisePayload(
+  chapter: ChapterRow,
+  userId: string,
+  opts: { sessionId?: string | null; darsBosqichi?: string | null } = {}
+): Promise<GeneratedExercise> {
+  const bookExercise = await getNextUnusedBookExercise(chapter.id);
+  if (bookExercise) {
+    return startBookExercise(bookExercise, chapter, userId, opts);
+  }
+  return generateAiExercise(chapter, userId, undefined, opts);
+}
+
+const GenerateSchema = z.object({
+  turi: z.enum(TURLAR).optional(), // berilmasa Fenix o'zi tanlaydi
+});
+
+/** To'g'ridan-to'g'ri generatsiya (sessiyasiz) — eski xatti-harakat
+ * saqlanadi (masalan qo'lda bitta mashq turi so'ralsa). */
+exercisesRouter.post("/chapters/:chapterId/exercises", async (req, res) => {
+  const parsed = GenerateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ xato: parsed.error.flatten() });
+  }
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const chapter = await getOwnedChapter(req.params.chapterId, userId);
+  if (!chapter) return res.status(404).json({ xato: "bob topilmadi" });
+
+  try {
+    const result = await generateAiExercise(chapter, userId, parsed.data.turi);
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(err?.status ?? 502).json({
+      xato: err?.status ? err.message : "mashq generatsiya qilinmadi",
       tafsilot: err instanceof Error ? err.message : String(err),
     });
   }
+});
+
+// ============================================================
+// 1.5) Dars sessiyasi (v12) — isinish → tushuntirish → amaliyot ⇄
+//      qayta_tushuntirish → yakun
+// ============================================================
+
+interface LessonSessionRow {
+  id: string;
+  user_id: string;
+  chapter_id: string;
+  holat: "isinish" | "tushuntirish" | "amaliyot" | "qayta_tushuntirish" | "yakunlandi";
+  joriy_mavzu: string | null;
+  ketma_ket_notogri_soni: number;
+  qayta_tushuntirilgan_mavzular: string[];
+  mashqlar_soni: number;
+  tushuntirish_matni: string | null;
+}
+
+async function getOwnedSession(sessionId: string, userId: string): Promise<LessonSessionRow | null> {
+  const [row] = await query<LessonSessionRow>(
+    `SELECT id, user_id, chapter_id, holat, joriy_mavzu, ketma_ket_notogri_soni,
+            qayta_tushuntirilgan_mavzular, mashqlar_soni, tushuntirish_matni
+     FROM lesson_sessions WHERE id=$1 AND user_id=$2`,
+    [sessionId, userId]
+  );
+  return row ?? null;
+}
+
+/** Bobda dars boshlaydi: agar allaqachon faol (tugallanmagan) sessiya
+ * bo'lsa — o'shani qaytaradi (davom ettirish), aks holda yangisini
+ * ochadi va isinish+mini-tushuntirishni Claude'dan so'raydi. */
+exercisesRouter.post("/chapters/:chapterId/lesson/start", async (req, res) => {
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const chapter = await getOwnedChapter(req.params.chapterId, userId);
+  if (!chapter) return res.status(404).json({ xato: "bob topilmadi" });
+
+  const [faol] = await query<LessonSessionRow>(
+    `SELECT id, user_id, chapter_id, holat, joriy_mavzu, ketma_ket_notogri_soni,
+            qayta_tushuntirilgan_mavzular, mashqlar_soni, tushuntirish_matni
+     FROM lesson_sessions WHERE user_id=$1 AND chapter_id=$2 AND tugagan_at IS NULL`,
+    [userId, chapter.id]
+  );
+  if (faol) {
+    return res.json({
+      session_id: faol.id,
+      holat: faol.holat,
+      tushuntirish_matni: faol.tushuntirish_matni,
+      mashqlar_soni: faol.mashqlar_soni,
+      davom_etilmoqda: true,
+    });
+  }
+
+  // Isinish uchun ma'lumot: takrorlash navbatidagi so'zlar soni +
+  // eng ko'p takrorlangan xato (agar bo'lsa).
+  const [duewords] = await query<{ soni: number }>(
+    `SELECT count(*)::int AS soni FROM words
+     WHERE user_id=$1 AND course_id=$2 AND deleted_at IS NULL AND next_review_at <= now()`,
+    [userId, chapter.course_id]
+  );
+  const [engKopXato] = await query<{ xato_matni: string; takrorlanish_soni: number }>(
+    `SELECT xato_matni, takrorlanish_soni FROM error_bank
+     WHERE user_id=$1 ORDER BY takrorlanish_soni DESC, created_at DESC LIMIT 1`,
+    [userId]
+  );
+
+  const ctx = await buildLearnerContext(userId, chapter.course_id);
+  const prompt = `${renderLearnerContext(ctx)}
+
+DARSLIK BOBI: "${chapter.nomi ?? "nomsiz"}" (${chapter.til_nomi} tili).
+Bob matnidan qism:
+---
+${(chapter.matn ?? "").slice(0, 3000)}
+---
+
+ISINISH KONTEKSTI: takrorlash navbatida ${duewords?.soni ?? 0} ta so'z bor.
+${
+    engKopXato
+      ? `Eng ko'p takrorlangan xato: "${engKopXato.xato_matni}" (${engKopXato.takrorlanish_soni} marta).`
+      : "Hali qayd etilgan takroriy xato yo'q."
+  }
+
+VAZIFA: haqiqiy ustoz kabi darsni boshla — DARS BOSHLASH matnini yoz,
+ikki qismdan iborat:
+1. **Qisqa isinish** (1-2 gap): agar takrorlash navbatida so'z bo'lsa
+   yoki takroriy xato bo'lsa, shuni eslatib o'tib, tayyorlab qo'y
+   (savol shart emas — shunchaki "eslaymizmi" ohangida).
+2. **Mini-tushuntirish** (3-5 gap, 1 ta aniq misol bilan): shu bobning
+   ASOSIY qoidasi/mavzusini, mashqlardan OLDIN, tushuntirib ber.
+   Oxirida bitta yengil tekshiruv-savoli bilan yakunla (masalan
+   "Tayyor bo'lsangiz, mashqni boshlaymiz").
+
+Faqat matnni yoz (Markdown **qalin** ishlatsa bo'ladi), JSON EMAS,
+boshqa hech narsa qo'shma.`;
+
+  let tushuntirishMatni: string;
+  try {
+    tushuntirishMatni = (
+      await callClaude({
+        model: "claude-sonnet-4-6",
+        maqsad: "dars_kirish",
+        prompt,
+        maxTokens: 500,
+        userId,
+      })
+    ).trim();
+  } catch (err) {
+    return res.status(502).json({
+      xato: "dars boshlanmadi",
+      tafsilot: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const [session] = await query<{ id: string }>(
+    `INSERT INTO lesson_sessions (user_id, chapter_id, holat, tushuntirish_matni)
+     VALUES ($1,$2,'amaliyot',$3)
+     RETURNING id`,
+    [userId, chapter.id, tushuntirishMatni]
+  );
+
+  res.status(201).json({
+    session_id: session.id,
+    holat: "amaliyot",
+    tushuntirish_matni: tushuntirishMatni,
+    mashqlar_soni: 0,
+    davom_etilmoqda: false,
+  });
+});
+
+const YAKUNLASH_MASHQ_SONI = 6; // shuncha mashqdan keyin frontend yakunlashni taklif qiladi
+
+/** Navbatdagi mashqni (yoki to'xtash-va-tushuntirish kartasini) qaytaradi. */
+exercisesRouter.post("/lesson/:sessionId/exercises/next", async (req, res) => {
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const session = await getOwnedSession(req.params.sessionId, userId);
+  if (!session) return res.status(404).json({ xato: "dars sessiyasi topilmadi" });
+  if (session.holat === "yakunlandi") {
+    return res.status(409).json({ xato: "bu dars sessiyasi allaqachon yakunlangan" });
+  }
+
+  const chapter = await getOwnedChapter(session.chapter_id, userId);
+  if (!chapter) return res.status(404).json({ xato: "bob topilmadi" });
+
+  // Ketma-ket 2 marta bir xil mavzuda xato — to'xtash-va-tushuntirish,
+  // lekin shu mavzu uchun sessiya davomida faqat BIR MARTA (spam qilmaslik uchun).
+  const qaytaKerakmi =
+    session.ketma_ket_notogri_soni >= 2 &&
+    !!session.joriy_mavzu &&
+    !session.qayta_tushuntirilgan_mavzular.includes(session.joriy_mavzu);
+
+  if (qaytaKerakmi) {
+    const ctx = await buildLearnerContext(userId, chapter.course_id);
+    const prompt = `${renderLearnerContext(ctx)}
+
+O'quvchi shu darsda "${session.joriy_mavzu}" mavzusida ketma-ket 2
+marta xato qildi. Haqiqiy ustoz kabi to'xta va shu mavzuni QAYTA,
+boshqacha (avvalgidan soddaroq/boshqa burchakdan) tushuntir — 3-5 gap,
+kamida 1 ta yangi/aniqroq misol bilan. Ohang qattiqqo'l lekin
+kamsitmaydigan bo'lsin (ustoz qattiqqolligi: ${ctx.ustoz_qattiqqolligi}/5).
+Oxirida o'quvchini davom ettirishga taklif qil.
+
+Faqat matnni yoz, JSON emas, boshqa hech narsa qo'shma.`;
+
+    let matn: string;
+    try {
+      matn = (
+        await callClaude({ model: "claude-sonnet-4-6", maqsad: "qayta_tushuntirish", prompt, maxTokens: 450, userId })
+      ).trim();
+    } catch (err) {
+      return res.status(502).json({
+        xato: "qayta tushuntirish tayyorlanmadi",
+        tafsilot: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    await query(
+      `UPDATE lesson_sessions
+       SET holat='qayta_tushuntirish',
+           qayta_tushuntirilgan_mavzular = array_append(qayta_tushuntirilgan_mavzular, $2),
+           ketma_ket_notogri_soni = 0,
+           updated_at = now()
+       WHERE id=$1`,
+      [session.id, session.joriy_mavzu]
+    );
+
+    return res.json({ tur: "qayta_tushuntirish", mavzu: session.joriy_mavzu, matn });
+  }
+
+  // Oddiy holat: navbatdagi mashq (kitobdan yoki AI'dan).
+  if (session.holat !== "amaliyot") {
+    await query(`UPDATE lesson_sessions SET holat='amaliyot', updated_at=now() WHERE id=$1`, [session.id]);
+  }
+
+  try {
+    const exercise = await pickNextExercisePayload(chapter, userId, {
+      sessionId: session.id,
+      darsBosqichi: "amaliyot",
+    });
+    await query(`UPDATE lesson_sessions SET mashqlar_soni = mashqlar_soni + 1, updated_at = now() WHERE id=$1`, [
+      session.id,
+    ]);
+    res.status(201).json({
+      tur: "mashq",
+      exercise,
+      mashqlar_soni: session.mashqlar_soni + 1,
+      yakunlashni_taklif_qil: session.mashqlar_soni + 1 >= YAKUNLASH_MASHQ_SONI,
+    });
+  } catch (err: any) {
+    res.status(err?.status ?? 502).json({
+      xato: err?.status ? err.message : "mashq tayyorlanmadi",
+      tafsilot: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+/** Darsni yakunlaydi — qisqa xulosa (Claude) + progress. Sessiya
+ * "yakunlandi" holatiga o'tadi, boshqa mashq berilmaydi (yangi
+ * `/lesson/start` chaqirilsa yangi sessiya ochiladi). */
+exercisesRouter.post("/lesson/:sessionId/finish", async (req, res) => {
+  const userId = await currentUserId(req.telegramUser!.id);
+  if (!userId) return res.status(404).json({ xato: "foydalanuvchi topilmadi" });
+
+  const session = await getOwnedSession(req.params.sessionId, userId);
+  if (!session) return res.status(404).json({ xato: "dars sessiyasi topilmadi" });
+  if (session.holat === "yakunlandi") {
+    return res.status(409).json({ xato: "bu dars sessiyasi allaqachon yakunlangan" });
+  }
+
+  const chapter = await getOwnedChapter(session.chapter_id, userId);
+  if (!chapter) return res.status(404).json({ xato: "bob topilmadi" });
+
+  const natijalar = await query<{ natija: string; mavzu: string | null }>(
+    `SELECT natija, mavzu FROM exercises WHERE lesson_session_id=$1 AND natija IS NOT NULL`,
+    [session.id]
+  );
+  const togriSoni = natijalar.filter((r) => r.natija === "togri").length;
+  const mavzular = [...new Set(natijalar.map((r) => r.mavzu).filter(Boolean))];
+
+  const ctx = await buildLearnerContext(userId, chapter.course_id);
+  const prompt = `${renderLearnerContext(ctx)}
+
+Dars tugadi: "${chapter.nomi ?? "nomsiz"}" bobida ${natijalar.length} ta
+mashq bajarildi, shundan ${togriSoni} tasi to'g'ri. Mavzular:
+${mavzular.length ? mavzular.join(", ") : "aniqlanmagan"}.
+${
+    session.qayta_tushuntirilgan_mavzular.length
+      ? `Qayta tushuntirilgan mavzular (hali mustahkam emas bo'lishi mumkin): ${session.qayta_tushuntirilgan_mavzular.join(", ")}.`
+      : ""
+  }
+
+VAZIFA: 60 soniyalik dars xulosasini yoz (3-5 gap): "bugun nima
+o'rgandik" + agar hali mustahkam bo'lmagan mavzu bo'lsa shuni aytib
+o't. Qisqa, iliq, lekin qattiqqo'l Fenix ohangida. Faqat matnni yoz,
+JSON emas.`;
+
+  let xulosa: string;
+  try {
+    xulosa = (
+      await callClaude({ model: "claude-haiku-4-5", maqsad: "dars_yakuni", prompt, maxTokens: 350, userId })
+    ).trim();
+  } catch (err) {
+    return res.status(502).json({
+      xato: "xulosa tayyorlanmadi",
+      tafsilot: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  await query(
+    `UPDATE lesson_sessions
+     SET holat='yakunlandi', xulosa_matni=$2, tugagan_at=now(), updated_at=now()
+     WHERE id=$1`,
+    [session.id, xulosa]
+  );
+
+  res.json({
+    xulosa_matni: xulosa,
+    mashqlar_soni: natijalar.length,
+    togri_soni: togriSoni,
+    mavzular,
+  });
 });
 
 // ============================================================
@@ -302,17 +724,6 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
       : ""
   }`;
 
-  // ASOSIY BAHOLASH: bu blok muvaffaqiyatsiz bo'lsa foydalanuvchi
-  // haqiqatan natija ololmagan bo'ladi — shuning uchun 502 to'g'ri.
-  // FIX v8.1 (izolyatsiya): bundan keyingi HAMMA narsa (error_bank,
-  // learnerProfile, user_progress, streak, teach-back kuzatuv savoli)
-  // yon-effekt hisoblanadi va o'z alohida try/catch'iga ega — ulardan
-  // biri qulasa ham foydalanuvchi natijasini (baho, fenix_fikri)
-  // baribir oladi. Avval bularning barchasi bitta try ichida edi,
-  // shu sabab masalan error_bank INSERT xato bersa foydalanuvchi
-  // 502 olardi va UPDATE exercises allaqachon yozilgani uchun qayta
-  // urinishda 409 "allaqachon baholangan" ko'rardi — natijani hech
-  // qachon ko'rmasdi.
   let baho: {
     natija: "togri" | "notogri" | "qisman";
     fenix_fikri: string;
@@ -359,24 +770,11 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
     return;
   }
 
-  // Bu nuqtadan boshlab foydalanuvchi javobi DB'ga yozilgan va
-  // baho tayyor — nima bo'lishidan qat'iy nazar res.json pastda
-  // yuboriladi. Har bir yon-effekt mustaqil xato ushlaydi.
   const togrimi = baho.natija === "togri";
 
   if (!togrimi) {
     try {
       const xatoMatni = `"${exercise.savol}" mashqida: ${parsed.data.javob}`;
-
-      // FIX: avval shu foydalanuvchining shu MAVZU bo'yicha oxirgi
-      // xatosi bor-yo'qligini tekshiramiz (exercises.mavzu ustuni
-      // aynan shu bog'lanish uchun mo'ljallangan — sxemadagi izohga
-      // qarang). `xato_matni` har safar savol+javobga qarab o'zgarib
-      // turadi, shuning uchun aniq matn bo'yicha solishtirish deyarli
-      // hech qachon mos kelmaydi — mavzu esa barqaror kalit.
-      // Topilsa — yangi qator ochish o'rniga takrorlanish_soni'ni
-      // oshiramiz va qayta_korsatish_at'ni (SM-2 uslubidagi oddiy
-      // o'suvchi interval bilan) yangilaymiz.
       let existing: { id: string; takrorlanish_soni: number } | undefined;
       if (exercise.mavzu) {
         [existing] = await query<{ id: string; takrorlanish_soni: number }>(
@@ -389,7 +787,6 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
         );
       }
 
-      // Oddiy o'suvchi jadval (kun): 1, 3, 7, 14, 30 (keyin 30da to'xtaydi).
       const INTERVALLAR_KUN = [1, 3, 7, 14, 30];
 
       if (existing) {
@@ -427,14 +824,6 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
     console.error("[exercises] recordExerciseOutcome xato:", err);
   }
 
-  // user_progress yangilanishi. ESLATMA: aniq "bob nechta mashqdan
-  // iborat" degan meyor hozircha yo'q, shuning uchun oddiy
-  // qadam-qadam evristika ishlatilgan — to'g'ri javob uchun +8%,
-  // qisman uchun +5%, to'liq noto'g'ri uchun +2% (urinish ham hisobga
-  // olinadi), 100%da to'xtaydi. FIX: avval "qisman" ham +2% olardi —
-  // to'liq xato bilan bir xil jazolanardi. Bu real progress-bar emas,
-  // taxminiy ko'rsatkich — keyinroq aniqroq meyor (masalan mashqlar
-  // soni/bob) bilan almashtirish kerak bo'ladi.
   if (exercise.chapter_id) {
     try {
       const qadam = togrimi ? 8 : baho.natija === "qisman" ? 5 : 2;
@@ -454,13 +843,6 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
     }
   }
 
-  // FIX v8.1 (streak): avval streak_kun hech qayerda yangilanmasdi.
-  // Bu yerda — foydalanuvchi haqiqatan bitta mashqni yakunlagan
-  // paytda — kunlik faollik hisoblanadi (o'z vaqt_zonasi bo'yicha):
-  //   * oxirgi faollik BUGUN bo'lsa — streak o'zgarmaydi (kuniga
-  //     bir marta hisoblanadi, ko'p mashq qilish streak'ni oshirmaydi)
-  //   * oxirgi faollik KECHA bo'lsa — streak +1
-  //   * aks holda (uzilish yoki birinchi marta) — streak = 1
   try {
     await query(
       `UPDATE users SET
@@ -481,11 +863,33 @@ Faqat quyidagi JSON formatida javob ber, boshqa hech narsa yozma:
     console.error("[exercises] streak_kun yangilashda xato:", err);
   }
 
-  // Teach-back (R) chuqurlashtirish: oddiy "to'g'ri/noto'g'ri" bilan
-  // to'xtamaydi — Fenix darhol (Haiku bilan, arzon) o'quvchi
-  // tushuntirishining chuqurligini sinovdan o'tkazadigan BITTA
-  // kuzatuv savoli tuzadi va uni "Nega?" suhbat tarixiga o'zi
-  // yozib qo'yadi — o'quvchi so'ramasa ham dialog boshlab beriladi.
+  // v12: lesson_session ketma-ket xato hisoblagichini yangilash —
+  // real ustoz kabi bir xil mavzuda ikkinchi marta yiqilsa to'xtash
+  // uchun signal (/lesson/:id/exercises/next shu counterni tekshiradi).
+  if (exercise.lesson_session_id) {
+    try {
+      if (togrimi) {
+        await query(
+          `UPDATE lesson_sessions
+           SET ketma_ket_notogri_soni = 0, updated_at = now()
+           WHERE id = $1`,
+          [exercise.lesson_session_id]
+        );
+      } else {
+        await query(
+          `UPDATE lesson_sessions
+           SET ketma_ket_notogri_soni = ketma_ket_notogri_soni + 1,
+               joriy_mavzu = COALESCE($2, joriy_mavzu),
+               updated_at = now()
+           WHERE id = $1`,
+          [exercise.lesson_session_id, exercise.mavzu]
+        );
+      }
+    } catch (err) {
+      console.error("[exercises] lesson_session counter yangilashda xato:", err);
+    }
+  }
+
   let teachBackKuzatuvSavoli: string | null = null;
   if (isTeachBack) {
     try {
@@ -516,8 +920,6 @@ boshqa hech narsa (JSON emas, oddiy matn, 1-2 gap).`;
         [exercise.id, userId, teachBackKuzatuvSavoli]
       );
     } catch (kuzatuvXato) {
-      // Kuzatuv savoli chiqmasa ham asosiy baholash natijasi
-      // baribir foydalanuvchiga qaytishi kerak.
       console.error("[exercises] teach-back kuzatuv savoli yaratilmadi:", kuzatuvXato);
     }
   }
